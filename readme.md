@@ -28,7 +28,7 @@
 1.  **Clone โปรเจ็กต์**
     ```bash
     git clone https://github.com/e29ckg/calendar-api-service.git
-    cd your-repo-name
+    cd calendar-api-service
     ```
 
 2.  **ติดตั้ง Dependencies**
