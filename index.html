@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Calendar Manager</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            --primary-color: #4f46e5;
+            --secondary-color: #ec4899;
+            --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        }
+
+        body {
+            font-family: 'Kanit', sans-serif;
+            background: var(--bg-gradient);
+            min-height: 100vh;
+            color: #334155;
+        }
+
+        /* Modern Card Style */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+
+        .event-card {
+            border: none;
+            border-radius: 16px;
+            background: white;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+        }
+
+        .event-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        .event-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: 4px;
+            background: var(--primary-color);
+            transition: 0.3s;
+        }
+
+        .event-card:hover::before {
+            width: 6px;
+        }
+
+        /* Date Box Design */
+        .date-box {
+            background: #eff6ff;
+            color: var(--primary-color);
+            border-radius: 12px;
+            min-width: 70px;
+            padding: 8px 0;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .date-day { font-size: 1.5rem; font-weight: 600; line-height: 1; }
+        .date-month { font-size: 0.8rem; text-transform: uppercase; font-weight: 500; }
+
+        /* Custom Button */
+        .btn-custom-primary {
+            background: var(--primary-color);
+            color: white;
+            border-radius: 10px;
+            padding: 10px 20px;
+            border: none;
+            box-shadow: 0 4px 6px rgba(79, 70, 229, 0.3);
+            transition: 0.2s;
+        }
+        .btn-custom-primary:hover {
+            background: #4338ca;
+            transform: translateY(-1px);
+        }
+
+        /* Badges */
+        .badge-time {
+            background: #f1f5f9;
+            color: #64748b;
+            font-weight: 400;
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+        .badge-allday {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        /* Action Buttons on Card */
+        .action-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.2s;
+            border: none;
+            background: transparent;
+        }
+        .action-btn:hover { background: #f1f5f9; }
+        .btn-edit { color: #f59e0b; }
+        .btn-delete { color: #ef4444; }
+
+        .loading-spinner { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container py-5">
+    <div class="row mb-5 align-items-center">
+        <div class="col-md-6">
+            <h2 class="fw-bold mb-0 text-dark"><i class="fas fa-calendar-check text-primary me-2"></i>ตารางงานของฉัน</h2>
+            <p class="text-muted mt-1 mb-0">จัดการนัดหมาย Google Calendar & Sheets</p>
+        </div>
+        <div class="col-md-6 text-md-end mt-3 mt-md-0">
+            <button class="btn btn-custom-primary" onclick="openModal()">
+                <i class="fas fa-plus me-2"></i> สร้างนัดหมายใหม่
+            </button>
+        </div>
+    </div>
+
+    <div class="glass-panel p-4 mb-5">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label text-muted small fw-bold">จากวันที่</label>
+                <input type="date" id="filterStart" class="form-control form-control-lg border-0 bg-light">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label text-muted small fw-bold">ถึงวันที่</label>
+                <input type="date" id="filterEnd" class="form-control form-control-lg border-0 bg-light">
+            </div>
+            <div class="col-md-4">
+                <button class="btn btn-dark w-100 btn-lg" style="border-radius: 10px;" onclick="fetchEvents()">
+                    <i class="fas fa-search me-2"></i> ค้นหาข้อมูล
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading" class="text-center loading-spinner my-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">กำลังซิงค์ข้อมูลกับ Google...</p>
+    </div>
+
+    <div id="eventsList" class="row g-4">
+        </div>
+</div>
+
+<div class="modal fade" id="eventModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 20px;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-bold" id="modalTitle">นัดหมายใหม่</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4">
+                <input type="hidden" id="eventId">
+                
+                <div class="d-flex justify-content-between align-items-center mb-4 p-3 bg-light rounded-3">
+                    <div>
+                        <span class="fw-bold d-block">ตลอดทั้งวัน</span>
+                        <small class="text-muted">ไม่ระบุเวลาเริ่มต้นและสิ้นสุด</small>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="isAllDay" onchange="toggleTimeInputs()" style="width: 3em; height: 1.5em;">
+                    </div>
+                </div>
+
+                <div class="form-floating mb-3">
+                    <input type="text" id="summary" class="form-control rounded-3" placeholder="หัวข้อ">
+                    <label for="summary">หัวข้อการนัดหมาย</label>
+                </div>
+
+                <div class="form-floating mb-3">
+                    <textarea id="description" class="form-control rounded-3" placeholder="รายละเอียด" style="height: 100px"></textarea>
+                    <label for="description">รายละเอียดเพิ่มเติม</label>
+                </div>
+                
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label class="form-label small text-muted">เวลาเริ่ม</label>
+                        <input type="datetime-local" id="start" class="form-control bg-light border-0">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small text-muted">เวลาสิ้นสุด</label>
+                        <input type="datetime-local" id="end" class="form-control bg-light border-0">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-0 pt-0 pb-4 px-4">
+                <button type="button" class="btn btn-light text-muted rounded-3 px-4" data-bs-dismiss="modal">ยกเลิก</button>
+                <button type="button" class="btn btn-custom-primary px-4" id="btnSave" onclick="saveEvent()">
+                    <i class="fas fa-save me-2"></i> บันทึกข้อมูล
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<script>
+    const API_URL = 'http://localhost:3000';
+    let eventModal;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        eventModal = new bootstrap.Modal(document.getElementById('eventModal'));
+        const today = new Date();
+        document.getElementById('filterStart').value = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+        document.getElementById('filterEnd').value = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+        fetchEvents();
+    });
+
+    function toggleTimeInputs() {
+        const isAllDay = document.getElementById('isAllDay').checked;
+        const startInput = document.getElementById('start');
+        const endInput = document.getElementById('end');
+
+        if (isAllDay) {
+            startInput.type = 'date';
+            endInput.type = 'date';
+            if(startInput.value) startInput.value = startInput.value.slice(0, 10);
+            if(endInput.value) endInput.value = endInput.value.slice(0, 10);
+        } else {
+            startInput.type = 'datetime-local';
+            endInput.type = 'datetime-local';
+        }
+    }
+
+    function openModal() {
+        document.getElementById('modalTitle').innerText = 'สร้างนัดหมายใหม่';
+        document.getElementById('eventId').value = '';
+        document.getElementById('summary').value = '';
+        document.getElementById('description').value = '';
+        document.getElementById('isAllDay').checked = false;
+        toggleTimeInputs();
+        document.getElementById('start').value = '';
+        document.getElementById('end').value = '';
+        eventModal.show();
+    }
+
+    function editEvent(event) {
+        document.getElementById('modalTitle').innerText = 'แก้ไขนัดหมาย';
+        document.getElementById('eventId').value = event.id;
+        document.getElementById('summary').value = event.summary;
+        document.getElementById('description').value = event.description || '';
+
+        const isAllDayEvent = !!event.start.date;
+        document.getElementById('isAllDay').checked = isAllDayEvent;
+        toggleTimeInputs();
+
+        if (isAllDayEvent) {
+            document.getElementById('start').value = event.start.date;
+            let endDate = new Date(event.end.date);
+            endDate.setDate(endDate.getDate() - 1); 
+            document.getElementById('end').value = endDate.toISOString().split('T')[0];
+        } else {
+            document.getElementById('start').value = event.start.dateTime ? event.start.dateTime.slice(0, 16) : '';
+            document.getElementById('end').value = event.end.dateTime ? event.end.dateTime.slice(0, 16) : '';
+        }
+        
+        eventModal.show();
+    }
+
+    async function saveEvent() {
+        const id = document.getElementById('eventId').value;
+        const isAllDay = document.getElementById('isAllDay').checked;
+        const summary = document.getElementById('summary').value;
+        const description = document.getElementById('description').value;
+        let start = document.getElementById('start').value;
+        let end = document.getElementById('end').value;
+
+        // Validation
+        if (!summary || !start || !end) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'ข้อมูลไม่ครบ',
+                text: 'กรุณากรอกหัวข้อและเวลาให้ครบถ้วน',
+                confirmButtonColor: '#4f46e5'
+            });
+            return;
+        }
+
+        // --- เตรียม Payload ---
+        let payload = { summary, description, isAllDay };
+        if (isAllDay) {
+            payload.start = start;
+            let endDateObj = new Date(end);
+            endDateObj.setDate(endDateObj.getDate() + 1);
+            payload.end = endDateObj.toISOString().split('T')[0];
+        } else {
+            payload.start = new Date(start).toISOString();
+            payload.end = new Date(end).toISOString();
+        }
+
+        const method = id ? 'PUT' : 'POST';
+        const url = id ? `${API_URL}/events/${id}` : `${API_URL}/events`;
+
+        // --- เริ่มต้น Loader ที่ปุ่ม ---
+        const btnSave = document.getElementById('btnSave');
+        const originalText = btnSave.innerHTML; // เก็บข้อความเดิมไว้ ("บันทึกข้อมูล")
+        
+        // เปลี่ยนปุ่มเป็นสถานะกำลังโหลด
+        btnSave.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> กำลังบันทึก...';
+        btnSave.disabled = true; // ห้ามกดซ้ำ
+
+        try {
+            const res = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                // ปิด Modal ก่อน
+                eventModal.hide();
+                
+                // แสดงผลสำเร็จ
+                Swal.fire({
+                    icon: 'success',
+                    title: 'บันทึกสำเร็จ',
+                    showConfirmButton: false,
+                    timer: 1500
+                });
+                
+                fetchEvents(); // โหลดข้อมูลใหม่
+            } else {
+                throw new Error('Save failed');
+            }
+        } catch (error) {
+            Swal.fire('Error', 'เกิดข้อผิดพลาดในการบันทึก', 'error');
+        } finally {
+            // --- คืนค่าปุ่มกลับสู่สภาพเดิม ไม่ว่าจะสำเร็จหรือล้มเหลว ---
+            btnSave.innerHTML = originalText;
+            btnSave.disabled = false;
+        }
+    }
+
+    // --- ส่วนแสดงผลการ์ดแบบ Modern ---
+    function renderEvents(events) {
+        const container = document.getElementById('eventsList');
+        container.innerHTML = '';
+        
+        if (!events || events.length === 0) {
+            container.innerHTML = `
+                <div class="col-12 text-center py-5">
+                    <i class="fas fa-calendar-times text-muted mb-3" style="font-size: 3rem;"></i>
+                    <h5 class="text-muted">ไม่พบรายการนัดหมาย</h5>
+                </div>`;
+            return;
+        }
+
+        const monthNames = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+
+        events.forEach(event => {
+            let dateObj, day, month, timeDisplay;
+            const isAllDay = !!event.start.date;
+
+            // คำนวณวันที่สำหรับโชว์ในกล่อง Date Box
+            if (isAllDay) {
+                dateObj = new Date(event.start.date);
+                timeDisplay = '<span class="badge badge-time badge-allday"><i class="fas fa-sun me-1"></i> All Day</span>';
+            } else {
+                dateObj = new Date(event.start.dateTime);
+                const startStr = dateObj.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                const endStr = new Date(event.end.dateTime).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                timeDisplay = `<span class="badge badge-time"><i class="far fa-clock me-1"></i> ${startStr} - ${endStr}</span>`;
+            }
+
+            day = dateObj.getDate();
+            month = monthNames[dateObj.getMonth()];
+
+            const html = `
+                <div class="col-md-6 col-lg-4">
+                    <div class="card event-card h-100 p-3">
+                        <div class="d-flex align-items-start">
+                            <div class="date-box me-3">
+                                <span class="date-day">${day}</span>
+                                <span class="date-month">${month}</span>
+                            </div>
+                            
+                            <div class="flex-grow-1">
+                                <h5 class="fw-bold mb-1 text-dark text-truncate" style="max-width: 200px;" title="${event.summary}">${event.summary}</h5>
+                                <div class="mb-2">${timeDisplay}</div>
+                                <p class="text-muted small mb-0 text-truncate" style="max-width: 220px;">
+                                    ${event.description || 'ไม่มีรายละเอียด'}
+                                </p>
+                            </div>
+
+                            <div class="d-flex flex-column gap-1 ms-2">
+                                <button class="action-btn btn-edit" onclick='editEvent(${JSON.stringify(event)})' title="แก้ไข">
+                                    <i class="fas fa-pen"></i>
+                                </button>
+                                <button class="action-btn btn-delete" onclick="deleteEvent('${event.id}')" title="ลบ">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.innerHTML += html;
+        });
+    }
+
+    async function fetchEvents() {
+        const start = document.getElementById('filterStart').value;
+        const end = document.getElementById('filterEnd').value;
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('eventsList').innerHTML = '';
+        try {
+            const res = await fetch(`${API_URL}/events?startDate=${start}&endDate=${end}`);
+            const data = await res.json();
+            renderEvents(data.events);
+        } catch (error) { Swal.fire('Error', 'ไม่สามารถเชื่อมต่อ Server ได้', 'error'); } 
+        finally { document.getElementById('loading').style.display = 'none'; }
+    }
+
+    function deleteEvent(id) {
+        Swal.fire({
+            title: 'ยืนยันการลบ?',
+            text: "ข้อมูลจะถูกลบออกจาก Calendar และบันทึก Log",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#ef4444',
+            confirmButtonText: 'ลบเลย',
+            cancelButtonText: 'ยกเลิก',
+            showLoaderOnConfirm: true, // <--- โชว์หมุนๆ ตอนกดปุ่มยืนยัน
+            preConfirm: async () => {
+                // SweetAlert จะรอจนกว่า Promise นี้จะจบ
+                try {
+                    const response = await fetch(`${API_URL}/events/${id}`, { method: 'DELETE' });
+                    if (!response.ok) {
+                        throw new Error(response.statusText);
+                    }
+                    return response.json();
+                } catch (error) {
+                    Swal.showValidationMessage(
+                        `Request failed: ${error}`
+                    );
+                }
+            },
+            allowOutsideClick: () => !Swal.isLoading() // ห้ามกดปิด Popup ตอนโหลดอยู่
+        }).then((result) => {
+            if (result.isConfirmed) {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'ลบเรียบร้อย',
+                    showConfirmButton: false,
+                    timer: 1000
+                });
+                fetchEvents();
+            }
+        });
+    }
+</script>
+
+</body>
+</html>
