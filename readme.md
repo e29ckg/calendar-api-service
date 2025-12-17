@@ -1,5 +1,6 @@
 ```markdown
 # 📅 Google Calendar & Sheets Integration Service
+```
 
 โปรเจ็กต์นี้เป็น Web Application สำหรับจัดการนัดหมายบน **Google Calendar** (สร้าง, ดู, แก้ไข, ลบ) โดยมีการบันทึกประวัติการทำรายการ (Activity Log) ลงใน **Google Sheets** โดยอัตโนมัติ มาพร้อมกับหน้า Frontend ที่ทันสมัยและใช้งานง่าย
 
@@ -26,7 +27,7 @@
 
 1.  **Clone โปรเจ็กต์**
     ```bash
-    git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
+    git clone [https://github.com/e29ckg/calendar-api-service.git](https://github.com/e29ckg/calendar-api-service.git)
     cd your-repo-name
     ```
 
