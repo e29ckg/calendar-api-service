@@ -2,43 +2,70 @@ const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
 const bodyParser = require('body-parser');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// --- การตั้งค่า Configuration ---
-const KEY_FILE_PATH = 'service-account-key.json'; // ชื่อไฟล์ Key ของคุณ
-const CALENDAR_ID = '0c71548cee9e8047655bc9c08bac3b5cb0a3f746051d1935700261d622062933@group.calendar.google.com'; 
-const SPREADSHEET_ID = '1-0DlVp0PM-OjkrnMiuPR8atSolaN18icJBdf-E9_cBw';
-const SCOPES = ['https://www.googleapis.com/auth/calendar','https://www.googleapis.com/auth/spreadsheets'];
+// --- Global Variables ---
+let TOKEN = process.env.TOKEN || null; // เก็บ Token ใน Memory
+const BASE_URL = process.env.BASE_URL;
+const USER = process.env.USER;
+const PASS = process.env.PASS;
 
-// --- เชื่อมต่อ Google Auth ---
+// --- Config Google ---
+const KEY_FILE_PATH = process.env.GOOGLE_KEY_FILE;
+const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID;
+const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
+const SCOPES = [
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/spreadsheets'
+];
+
+// --- Config Telegram ---
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const CHAT_ID = process.env.CHAT_ID;
+const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+
+// --- Google Auth ---
 const auth = new google.auth.GoogleAuth({
     keyFile: KEY_FILE_PATH,
     scopes: SCOPES,
 });
-
 const calendar = google.calendar({ version: 'v3', auth });
 const sheets = google.sheets({ version: 'v4', auth });
 
 // ==========================================
-// 1. ดึงข้อมูล (รายวัน/รายเดือน)
-// GET /events?startDate=2023-10-01&endDate=2023-10-31
+// Middleware: ตรวจสอบ Token ก่อนยิง API นอก
+// ==========================================
+const checkToken = async (req, res, next) => {
+    // ถ้าไม่มี Token หรือ Token เป็นค่าว่าง ให้ไปขอใหม่
+    if (!TOKEN) {
+        console.log('Token not found, fetching new one...');
+        await get_Token();
+    }
+    
+    // ลองยิง Test ดูว่า Token ใช้ได้ไหม (Optional: ถ้า API ไว เช็คทุกครั้งก็ได้)
+    // แต่เพื่อความเร็ว อาจจะข้ามไปก่อน ถ้า Error 401 ค่อยขอใหม่ใน logic หลักก็ได้
+    // ในที่นี้ผมจะให้ผ่านไปก่อนเพื่อให้ flow ไม่ช้า
+    next();
+};
+
+// ==========================================
+// Routes: Google Calendar (เหมือนเดิม)
 // ==========================================
 app.get('/events', async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
-
-        // ถ้าไม่ส่งวันที่มา ให้ Default เป็นวันนี้
         const timeMin = startDate ? new Date(startDate).toISOString() : new Date().toISOString();
         const timeMax = endDate ? new Date(endDate).toISOString() : undefined;
 
         const response = await calendar.events.list({
             calendarId: CALENDAR_ID,
             timeMin: timeMin,
-            timeMax: timeMax, // ถ้าไม่ใส่ timeMax จะดึงตั้งแต่วันนี้ไปเรื่อยๆ
+            timeMax: timeMax,
             singleEvents: true,
             orderBy: 'startTime',
         });
@@ -48,148 +75,482 @@ app.get('/events', async (req, res) => {
             count: response.data.items.length,
             events: response.data.items
         });
-
     } catch (error) {
         console.error('Error fetching events:', error);
         res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลได้' });
     }
 });
 
-// ==========================================
-// 2. สร้างนัดหมายใหม่
-// POST /events
-// Body: { "summary": "Meeting", "description": "Details", "start": "...", "end": "..." }
-// ==========================================
 app.post('/events', async (req, res) => {
     try {
         const { summary, description, start, end, isAllDay } = req.body;
-
-        // สร้าง Object event ตามเงื่อนไข isAllDay
         const event = {
             summary,
             description,
-            start: isAllDay 
-                ? { date: start } // กรณี All-day ส่งแค่ '2023-12-25'
-                : { dateTime: start, timeZone: 'Asia/Bangkok' },
-            end: isAllDay 
-                ? { date: end }   // กรณี All-day ส่งแค่ '2023-12-26'
-                : { dateTime: end, timeZone: 'Asia/Bangkok' },
+            start: isAllDay ? { date: start } : { dateTime: start, timeZone: 'Asia/Bangkok' },
+            end: isAllDay ? { date: end } : { dateTime: end, timeZone: 'Asia/Bangkok' },
         };
-
-        const response = await calendar.events.insert({
-            calendarId: CALENDAR_ID,
-            resource: event,
-        });
-
-        await logToSheet('CREATE', response.data); // Log ลง Sheet
+        const response = await calendar.events.insert({ calendarId: CALENDAR_ID, resource: event });
+        await logToSheet('CREATE', response.data);
         res.json({ message: 'สร้างสำเร็จ', eventId: response.data.id });
-
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ error: 'Failed' });
     }
 });
 
-// ==========================================
-// 3. อัปเดตข้อมูล (แก้ไข)
-// PUT /events/:eventId
-// ==========================================
 app.put('/events/:eventId', async (req, res) => {
     try {
         const eventId = req.params.eventId;
         const { summary, description, start, end, isAllDay } = req.body;
-
-        // ดึงอันเก่ามาเช็คก่อน (เผื่อ user ส่งมาไม่ครบ)
         const oldEvent = await calendar.events.get({ calendarId: CALENDAR_ID, eventId });
-        
-        // Logic การ update: ถ้า user ส่งค่าใหม่มาให้ใช้ค่าใหม่ ถ้าไม่ส่งให้ใช้ค่าเดิม
         const updatedEvent = {
             ...oldEvent.data,
             summary: summary || oldEvent.data.summary,
             description: description || oldEvent.data.description,
-            // เช็คว่า User เปลี่ยนโหมดเป็น All Day หรือไม่
             start: isAllDay 
-                ? { date: start, dateTime: null, timeZone: null } // ลบ dateTime ทิ้งถ้าเป็น All Day
+                ? { date: start, dateTime: null, timeZone: null } 
                 : (start ? { dateTime: start, timeZone: 'Asia/Bangkok', date: null } : oldEvent.data.start),
             end: isAllDay 
                 ? { date: end, dateTime: null, timeZone: null }
                 : (end ? { dateTime: end, timeZone: 'Asia/Bangkok', date: null } : oldEvent.data.end),
         };
-
-        const response = await calendar.events.update({
-            calendarId: CALENDAR_ID,
-            eventId: eventId,
-            resource: updatedEvent,
-        });
-
+        const response = await calendar.events.update({ calendarId: CALENDAR_ID, eventId, resource: updatedEvent });
         await logToSheet('UPDATE', response.data);
         res.json({ message: 'อัปเดตสำเร็จ', event: response.data });
-
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ error: 'Failed' });
     }
 });
 
-// ==========================================
-// 4. ลบข้อมูล
-// DELETE /events/:eventId
-// ==========================================
 app.delete('/events/:eventId', async (req, res) => {
     try {
         const eventId = req.params.eventId;
-
-        // ดึงข้อมูลเก่ามาก่อน เพื่อบันทึกลง Sheet
-        const oldEvent = await calendar.events.get({
-            calendarId: CALENDAR_ID,
-            eventId: eventId
-        });
-
-        await calendar.events.delete({
-            calendarId: CALENDAR_ID,
-            eventId: eventId,
-        });
-
+        const oldEvent = await calendar.events.get({ calendarId: CALENDAR_ID, eventId });
+        await calendar.events.delete({ calendarId: CALENDAR_ID, eventId });
         await logToSheet('DELETE', oldEvent.data);
-
         res.json({ message: 'ลบนัดหมายสำเร็จแล้ว' });
-
     } catch (error) {
         console.error('Error deleting event:', error);
         res.status(500).json({ error: 'ไม่สามารถลบข้อมูลได้' });
     }
 });
 
-// Start Server
-const PORT = 3000;
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-    console.log(`ตรวจสอบ Calendar ID: ${CALENDAR_ID}`);
+// ==========================================
+// Route: Case Today (ดึงคดีวันนี้ + แจ้ง Telegram)
+// ==========================================
+app.get('/casetoday', checkToken, async (req, res) => {
+    try {
+        const date = new Date();
+        const options = { day: '2-digit', month: '2-digit', year: 'numeric' };
+        // แปลงวันที่เป็น DD/MM/YYYY (ปีพุทธศักราช) เพื่อส่งให้ API
+        const formattedDate = date.toLocaleDateString('th-TH', options); 
+        // const formattedDate = "26/03/2567"; // สำหรับ Test
+
+        const url = `${BASE_URL}/jvncProceed/api/v1/proceed/searchElectronicAppointDateByCase/search?version=1`;
+        const postBody = { "version": 1, "appointDate": formattedDate, "offset": 0, "limit": 200 };
+        const config = {
+            headers: {
+                'Authorization': `Bearer ${TOKEN}`,
+                'Content-Type': 'application/json'
+            }
+        };
+
+        const response = await axios.post(url, postBody, config);
+        let data = response.data;
+
+        // เช็คกรณีไม่พบคดี
+        if (data.success === false) {
+            if (data.message === "SearchElectronicAppointDateByCase list not found in the database") {
+                const msg = `คดีนัดวันนี้ ${formattedDate}\n--- ไม่พบคดี ---`;
+                await sendTelegramMessage(CHAT_ID, msg);
+                return res.json({ message: msg });
+            }
+            return res.send(data);
+        }
+
+        // Map ข้อมูล
+        const jsonData = data.data.map(item => ({
+            fullCaseId: item.fullCaseId,
+            reasonName: item.reasonName,
+            appointDate: item.appointDate,
+            appointTime: item.appointTime,
+            roomName: item.roomName
+        }));
+
+        // Sort เวลา
+        const sortedData = jsonData.sort((a, b) => {
+            return parseAppointTime(a.appointTime) - parseAppointTime(b.appointTime);
+        });
+
+        // Format ข้อมูลสำหรับแสดงผล
+        const jsonDataWithFormattedDate = sortedData.map(item => ({
+            fullCaseId: item.fullCaseId,
+            reasonName: item.reasonName,
+            appointDate: item.appointDate.split(' ')[0],
+            appointTime: item.appointTime.split(' ')[0], // ตัดเอาแค่เวลา
+            roomName: item.roomName
+        }));
+
+        // สร้างข้อความ Telegram
+        const messageList = jsonDataWithFormattedDate.map(item => {
+            // ตัดเลขวินาทีออกเพื่อให้สั้นลง (เช่น 09.00.00 -> 09.00)
+            const shortTime = item.appointTime.substring(0, 5); 
+            return `🏷 ${item.fullCaseId} -> ${item.reasonName} (${shortTime} น.)\n`;
+        }).join('');
+
+        const headerMsg = `📅 คดีนัดวันนี้ ${jsonDataWithFormattedDate[0].appointDate}`;
+        const finalMessage = `${headerMsg}\n--------------------------\n${messageList}`;
+
+        await sendTelegramMessage(CHAT_ID, finalMessage);
+        
+        console.log('Sent Telegram:', finalMessage);
+        res.json(jsonDataWithFormattedDate);
+
+    } catch (error) {
+        console.error('Error in /casetoday:', error.message);
+        // ถ้า Error เพราะ Token หมดอายุ (401) อาจจะสั่งให้ get_Token() ใหม่ตรงนี้ได้
+        res.status(500).json({ error: 'Failed to process case today', details: error.message });
+    }
 });
 
+// ==========================================
+// Helper Functions
+// ==========================================
 
-// ฟังก์ชันสำหรับบันทึกลง Google Sheet (Append ต่อท้าย)
+async function get_Token() {
+    const url = `${BASE_URL}/jvncUser/api/v1/users/login`;
+    const postBody = { "version": 1, "name": USER, "passwords": PASS };
+    try {
+        console.log('Requesting new Token...');
+        const response = await axios.post(url, postBody);
+        const authHeader = response.headers.authorization;
+        if (authHeader) {
+            TOKEN = authHeader.replace("Bearer ", "");
+            console.log('Token updated successfully.');
+            return TOKEN;
+        }
+        return null;
+    } catch (error) {
+        console.error('Error getting token:', error.message);
+        return null;
+    }
+}
+
+// Helper: Parse เวลา "09.00.00" -> จำนวนนาที
+function parseAppointTime(appointTime) {
+    if (!appointTime) return 0;
+    try {
+        const timeParts = appointTime.split(' ')[0].split('.');
+        const hours = parseInt(timeParts[0], 10);
+        const minutes = parseInt(timeParts[1], 10);
+        return (hours * 60) + minutes;
+    } catch (e) {
+        return 0;
+    }
+}
+
 async function logToSheet(action, eventData) {
     try {
-        const values = [
-            [
-                eventData.id || '-',            // Event ID
-                action,                         // Action: CREATE, UPDATE, DELETE
-                eventData.summary || '-',       // หัวข้อ
-                eventData.start?.dateTime || eventData.start?.date || '-', // เวลาเริ่ม
-                eventData.end?.dateTime || eventData.end?.date || '-',     // เวลาจบ
-                new Date().toLocaleString('th-TH') // เวลาที่บันทึก
-            ]
-        ];
-
+        const values = [[
+            eventData.id || '-',
+            action,
+            eventData.summary || '-',
+            eventData.start?.dateTime || eventData.start?.date || '-',
+            eventData.end?.dateTime || eventData.end?.date || '-',
+            new Date().toLocaleString('th-TH')
+        ]];
         await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID,
-            range: 'Logs!A:F', // ชื่อแผ่นงาน และคอลัมน์ A ถึง F
+            range: 'Logs!A:F',
             valueInputOption: 'USER_ENTERED',
             resource: { values: values },
         });
-        console.log(`บันทึก ${action} ลง Sheet สำเร็จ`);
+        console.log(`Log ${action} to Sheet success.`);
     } catch (error) {
         console.error('Error logging to sheet:', error);
     }
 }
+
+// แปลง Date Object เป็นรูปแบบที่ API คดีต้องการ (DD/MM/YYYY พ.ศ.)
+function getBuddhistDateString(date) {
+    const d = new Date(date);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear() + 543; // แปลงเป็น พ.ศ.
+    return `${day}/${month}/${year}`;
+}
+
+// แปลงวันที่และเวลาจาก API คดี ให้เป็น Google Calendar ISO String
+// inputDate: 26/03/2567, inputTime: 09.00.00
+function convertToISODateTime(inputDate, inputTime) {
+    const [day, month, beYear] = inputDate.split('/');
+    const adYear = parseInt(beYear) - 543;
+    
+    // แปลงเวลา 09.00.00 -> 09:00:00
+    const timeClean = inputTime.replace(/\./g, ':');
+    
+    // สร้าง string มาตรฐาน: 2024-03-26T09:00:00
+    return `${adYear}-${month}-${day}T${timeClean}`;
+}
+
+async function sendTelegramMessage(chatId, text) {
+    try {
+        if(!chatId || !text) return;
+        await axios.post(`${TELEGRAM_API}/sendMessage`, { chat_id: chatId, text: text });
+        console.log('Telegram msg sent.');
+    } catch (error) {
+        console.error('Telegram Error:', error.message);
+    }
+}
+
+
+// Route สำหรับ Manual Update Token/Test
+app.get('/manual-token', async (req, res) => {
+    const t = await get_Token();
+    res.json({ message: 'Token updated', token_preview: t ? t.substring(0, 10) + '...' : 'failed' });
+});
+
+// ==========================================
+// Sync Data: สรุปยอดคดีรายวัน (Daily Summary)
+// GET /sync-cases
+// ==========================================
+app.get('/sync-cases', checkToken, async (req, res) => {
+    const DAYS_TO_FETCH = 30;
+    const results = { added: 0, updated: 0, skipped: 0, errors: 0 };
+
+    try {
+        console.log(`--- เริ่มต้น Sync ข้อมูลสรุปรายวัน ${DAYS_TO_FETCH} วัน ---`);
+
+        for (let i = 0; i < DAYS_TO_FETCH; i++) {
+            const currentDate = new Date();
+            currentDate.setDate(currentDate.getDate() + i); 
+            const dateForApi = getBuddhistDateString(currentDate); 
+
+            console.log(`Processing: ${dateForApi}`);
+
+            const url = `${BASE_URL}/jvncProceed/api/v1/proceed/searchElectronicAppointDateByCase/search?version=1`;
+            const postBody = { "version": 1, "appointDate": dateForApi, "offset": 0, "limit": 200 };
+            const config = { headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } };
+
+            try {
+                const apiRes = await axios.post(url, postBody, config);
+                const data = apiRes.data;
+
+                // ถ้าไม่มีข้อมูล หรือ Success = false ให้ข้าม
+                if (!data.success || !data.data || data.data.length === 0) {
+                     continue; 
+                }
+
+                // ======================================================
+                // 1. เตรียมข้อมูลสรุป (Aggregation)
+                // ======================================================
+                const cases = data.data;
+                const totalCases = cases.length;
+
+                // เรียงลำดับตามเวลา (เช้า -> บ่าย) เพื่อความสวยงามใน List
+                cases.sort((a, b) => {
+                    const timeA = parseFloat(a.appointTime.replace(/:/g, '.'));
+                    const timeB = parseFloat(b.appointTime.replace(/:/g, '.'));
+                    return timeA - timeB;
+                });
+
+                // สร้าง Description List
+                let descriptionList = `สรุปรายการนัดหมายประจำวันที่ ${dateForApi}\n----------------------------\n`;
+                cases.forEach((item, index) => {
+                    // ตัดเวลาให้สั้นลง (เช่น 09.00.00 -> 09.00)
+                    const shortTime = item.appointTime ? item.appointTime.substring(0, 5) : 'ไม่ระบุ';
+                    descriptionList += `${index + 1}. ${item.fullCaseId} (${item.reasonName})\n   ห้อง: ${item.roomName} | เวลา: ${shortTime} น.\n\n`;
+                });
+                
+                descriptionList += `(ข้อมูลอัปเดตเมื่อ: ${new Date().toLocaleString('th-TH')})`;
+
+                // ======================================================
+                // 2. คำนวณวันที่สำหรับ All Day Event
+                // ======================================================
+                // แปลงวันที่ (DD/MM/YYYY พ.ศ. -> YYYY-MM-DD ค.ศ.)
+                const [dd, mm, yyyyTH] = dateForApi.split('/');
+                const yyyyEN = parseInt(yyyyTH) - 543;
+                const dateISO = `${yyyyEN}-${mm}-${dd}`; // Start Date (เช่น 2025-12-19)
+
+                const endDateObj = new Date(dateISO);
+                endDateObj.setDate(endDateObj.getDate() + 1);
+                const nextDayISO = endDateObj.toISOString().split('T')[0]; // End Date (เช่น 2025-12-20)
+
+                // ======================================================
+                // 3. สร้าง Resource (All Day)
+                // ======================================================
+                const eventResource = {
+                    summary: `⚖️ คดีวันนี้ ${totalCases} คดี`, // Title: คดีวันนี้ X คดี
+                    description: descriptionList,
+                    start: { date: dateISO },     // เริ่มวันนี้
+                    end: { date: nextDayISO }     // จบวันถัดไป (ตามกฎ Google All Day)
+                };
+
+                // ======================================================
+                // 4. เช็คซ้ำ & บันทึก (Check & Save)
+                // ======================================================
+                // ค้นหา Event ในวันนั้น ที่มีชื่อขึ้นต้นว่า "⚖️ คดีวันนี้"
+                const existingEvents = await calendar.events.list({
+                    calendarId: CALENDAR_ID,
+                    timeMin: `${dateISO}T00:00:00Z`,
+                    timeMax: `${dateISO}T23:59:59Z`,
+                    q: 'คดีวันนี้', // Keyword สำหรับค้นหา
+                    singleEvents: true
+                });
+
+                if (existingEvents.data.items.length > 0) {
+                    // --- UPDATE (มีอยู่แล้ว ให้อัปเดตยอดและรายชื่อ) ---
+                    const eventIdToUpdate = existingEvents.data.items[0].id;
+                    await calendar.events.update({
+                        calendarId: CALENDAR_ID,
+                        eventId: eventIdToUpdate,
+                        resource: eventResource
+                    });
+                    
+                    // Log แบบ Summary
+                    await logToSheet('DAILY-UPDATE', { 
+                        id: eventIdToUpdate, 
+                        summary: eventResource.summary, 
+                        start: eventResource.start, 
+                        end: eventResource.end 
+                    });
+                    
+                    results.updated++;
+                    console.log(`~ Updated Summary: ${dateForApi} (${totalCases} คดี)`);
+
+                } else {
+                    // --- CREATE (ยังไม่มี ให้สร้างใหม่) ---
+                    const response = await calendar.events.insert({
+                        calendarId: CALENDAR_ID,
+                        resource: eventResource,
+                    });
+
+                    await logToSheet('DAILY-CREATE', { 
+                        id: response.data.id, 
+                        summary: eventResource.summary, 
+                        start: eventResource.start, 
+                        end: eventResource.end 
+                    });
+
+                    results.added++;
+                    console.log(`+ Created Summary: ${dateForApi} (${totalCases} คดี)`);
+                }
+
+            } catch (innerError) {
+                // Error Handling (ข้ามกรณีไม่พบคดี)
+                if (innerError.response) {
+                    const resData = innerError.response.data;
+                    if (resData.message === "SearchElectronicAppointDateByCase list not found in the database" ||
+                        resData.success === false) {
+                        // ไม่พบคดี ถือเป็นเรื่องปกติ ข้ามไป
+                        continue; 
+                    }
+                    console.error(`Error วันที่ ${dateForApi}:`, resData);
+                } else {
+                    console.error(`Error processing date ${dateForApi}:`, innerError.message);
+                }
+                results.errors++;
+            }
+        }
+
+        res.json({ message: 'Daily summary sync completed', summary: results });
+
+    } catch (error) {
+        console.error('Fatal Sync Error:', error);
+        res.status(500).json({ error: 'Sync failed' });
+    }
+});
+
+
+app.get('/casetoday', async (req, res) => {
+    
+  const date = new Date(); 
+  const options = { day: '2-digit', month: '2-digit', year: 'numeric' };
+  const formattedDate = date.toLocaleDateString('th-TH', options);
+  // const formattedDate = "26/03/2567";
+
+  const url = `${BASE_URL}/jvncProceed/api/v1/proceed/searchElectronicAppointDateByCase/search?version=1`;
+  const postBody = { "version":1, "appointDate": formattedDate, "offset":0, "limit":200 };
+  const config = {
+    headers: {
+      'Authorization': `Bearer ${TOKEN}`,
+      'Content-Type': 'application/json'
+    }
+  };
+  try {
+    
+      const response = await axios.post(url, postBody, config);  
+      let data =  response.data;
+
+      if(data.success == false){
+        if(data.message === "SearchElectronicAppointDateByCase list not found in the database"){
+          sendLineNotifyMessage('คดีนัดวันนี้ '+ formattedDate + '\n ---ไม่พบคดี---' );
+          
+        }
+        res.send(data)
+        return 
+      }
+      
+      const jsonData = data.data.map(item => ({
+          fullCaseId: item.fullCaseId,
+          reasonName: item.reasonName,
+          appointDate: item.appointDate,
+          appointTime: item.appointTime,
+          roomName: item.roomName
+        }));
+
+        // เรียงลำดับตาม appointTime จากน้อยไปหามาก
+        const sortedData = jsonData.sort((a, b) => {
+          const timeA = parseAppointTime(a.appointTime);
+          const timeB = parseAppointTime(b.appointTime);
+
+          return timeA - timeB;
+        });
+
+        console.log(sortedData);
+
+        // ฟังก์ชันสำหรับแปลง appointTime เป็นเวลา (ในนี้ถือว่าเป็นเวลาเริ่มต้น)
+        function parseAppointTime(appointTime) {
+          const timeParts = appointTime.split(' ')[0].split('.');
+          const hours = parseInt(timeParts[0], 10);
+          const minutes = parseInt(timeParts[1], 10);
+          
+          return hours * 60 + minutes;
+        }
+
+        // แปลงรูปแบบวันที่และเปลี่ยนเป็นภาษาไทย
+        const jsonDataWithFormattedDate = sortedData.map(item => {
+        // ตัดเอาเฉพาะวันที่
+          const appointDateOnly = item.appointDate.split(' ')[0];
+          const appointTimeOnly = item.appointTime.split(' ')[0];
+          return {
+              fullCaseId: item.fullCaseId,
+              reasonName: item.reasonName,
+              appointDate: appointDateOnly,
+              appointTime: appointTimeOnly,
+              roomName: item.roomName
+          };
+        });
+
+        const messageToSend = jsonDataWithFormattedDate.map(item => {
+            return `🏷${item.fullCaseId}->${item.reasonName}(${item.appointTime})\n`;
+          }).join('');
+        
+          sendLineNotifyMessage('คดีนัดวันนี้ '+ jsonDataWithFormattedDate[0].appointDate + '\n' + messageToSend);
+          
+          res.json(jsonDataWithFormattedDate)
+        console.log(messageToSend)
+      
+  } catch (error) {
+      console.error('Error:', error);
+      res.status(500).json({ error: 'Failed to obtain token' });
+  }
+});
+
+// Start Server
+const PORT = 3000;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
