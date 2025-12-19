@@ -1,5 +1,4 @@
 
-```markdown
 # ⚖️ Legal Case & Calendar Sync System
 
 ระบบจัดการและซิงค์ข้อมูลนัดหมายคดีความจากระบบงานคดี (Internal API) ไปยัง **Google Calendar** แบบอัตโนมัติ พร้อมแจ้งเตือนผ่าน **Telegram** และบันทึก Log การทำงานลง **Google Sheets**
