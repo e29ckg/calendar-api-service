@@ -28,7 +28,10 @@ app.get('/', (req, res) => {
 
 // รับค่า Config จาก .env
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID; // ค่าใหม่ที่ได้จากข้อ 1
-const ALLOWED_EMAILS = ['e29ckg@gmail.com', 'admin@court.go.th']; 
+const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '').split(',').map(email => email.trim());
+
+// ลอง log ดูว่าแปลงสำเร็จไหม
+console.log('Allowed Users:', ALLOWED_EMAILS);
 
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
