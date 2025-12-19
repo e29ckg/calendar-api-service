@@ -1,13 +1,36 @@
 const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
+const { OAuth2Client } = require('google-auth-library');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+const path = require('path');
+
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
+
+// 1. ตั้งค่าให้รู้จัก EJS
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
+app.use(express.static(__dirname));
+
+app.get('/', (req, res) => {
+    // Render ไฟล์ index.ejs พร้อมส่งตัวแปร googleClientId ไปให้
+    res.render('index', { 
+        googleClientId: process.env.GOOGLE_CLIENT_ID ,
+        apiUrl: process.env.APP_URL || 'http://localhost:3000'
+    });
+});
+
+// รับค่า Config จาก .env
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID; // ค่าใหม่ที่ได้จากข้อ 1
+const ALLOWED_EMAILS = ['e29ckg@gmail.com', 'admin@court.go.th']; 
+
+const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // --- Global Variables ---
 let TOKEN = process.env.TOKEN || null; // เก็บ Token ใน Memory
@@ -16,7 +39,7 @@ const USER = process.env.USER;
 const PASS = process.env.PASS;
 
 // --- Config Google ---
-const KEY_FILE_PATH = process.env.GOOGLE_KEY_FILE;
+// const KEY_FILE_PATH = process.env.GOOGLE_KEY_FILE;
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID;
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
 const SCOPES = [
@@ -31,7 +54,7 @@ const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
 // --- Google Auth ---
 const auth = new google.auth.GoogleAuth({
-    keyFile: KEY_FILE_PATH,
+    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
     scopes: SCOPES,
 });
 const calendar = google.calendar({ version: 'v3', auth });
@@ -52,6 +75,47 @@ const checkToken = async (req, res, next) => {
     // ในที่นี้ผมจะให้ผ่านไปก่อนเพื่อให้ flow ไม่ช้า
     next();
 };
+
+// API Login ด้วย Google
+app.post('/api/google-login', async (req, res) => {
+    const { token } = req.body;
+    try {
+        // ให้ Google ช่วยเช็คว่า Token นี้ของจริงไหม
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        const email = payload.email;
+
+        // เช็คว่าอีเมลนี้ได้รับอนุญาตไหม (Whitelist)
+        if (ALLOWED_EMAILS.includes(email)) {
+            console.log(`User logged in: ${email}`);
+            // ส่งข้อมูลกลับไปบอก Frontend ว่าผ่าน
+            res.json({ 
+                success: true, 
+                user: { name: payload.name, email: email, picture: payload.picture } 
+            });
+        } else {
+            console.log(`Unauthorized login attempt: ${email}`);
+            res.status(403).json({ success: false, message: 'อีเมลนี้ไม่มีสิทธิ์เข้าใช้งานระบบ' });
+        }
+    } catch (error) {
+        console.error('Login Error:', error);
+        res.status(401).json({ success: false, message: 'Invalid Token' });
+    }
+});
+
+// API สำหรับ Login
+app.post('/login', (req, res) => {
+    const { username, password } = req.body;
+    
+    if (username === APP_USER && password === APP_PASS) {
+        res.json({ success: true, token: 'mock-token-session' });
+    } else {
+        res.status(401).json({ success: false, message: 'รหัสผ่านไม่ถูกต้อง' });
+    }
+});
 
 // ==========================================
 // Routes: Google Calendar (เหมือนเดิม)
@@ -550,7 +614,7 @@ app.get('/casetoday', async (req, res) => {
 });
 
 // Start Server
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });

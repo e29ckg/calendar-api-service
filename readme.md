@@ -47,7 +47,9 @@
 
     ```env
     # --- Google Cloud Config ---
-    GOOGLE_KEY_FILE=service-account-key.json
+    GOOGLE_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com
+    <!-- GOOGLE_KEY_FILE=service-account-key.json -->
+    GOOGLE_CREDENTIALS={}
     GOOGLE_CALENDAR_ID=xxxxxxxxxxx@group.calendar.google.com
     GOOGLE_SHEET_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
@@ -59,6 +61,8 @@
     # --- Telegram Config ---
     TELEGRAM_TOKEN=your_bot_token
     CHAT_ID=your_chat_id
+
+    APP_URL=http://localhost:3000
     ```
 
 4.  **เตรียมไฟล์ Service Account Key**
