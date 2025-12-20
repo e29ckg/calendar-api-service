@@ -429,6 +429,8 @@
         const isAllDay = document.getElementById('isAllDay').checked;
         const summary = document.getElementById('summary').value;
         const description = document.getElementById('description').value;
+        const userInfo = JSON.parse(sessionStorage.getItem('user_info') || '{}');
+        const userEmail = userInfo.email || 'Guest';
         let start = document.getElementById('start').value;
         let end = document.getElementById('end').value;
 
@@ -436,7 +438,7 @@
             Swal.fire({icon:'warning', title:'ข้อมูลไม่ครบ', confirmButtonColor:'#4f46e5'}); return; 
         }
 
-        let payload = { summary, description, isAllDay };
+        let payload = { summary, description, isAllDay, userEmail };
         if (isAllDay) {
             payload.start = start;
             let endDateObj = new Date(end); endDateObj.setDate(endDateObj.getDate() + 1);
@@ -461,22 +463,46 @@
         finally { btn.innerHTML = orgText; btn.disabled = false; }
     }
 
-    async function deleteEvent(id) {
-        Swal.fire({
-            title: 'ยืนยันการลบ?',
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#ef4444',
-            confirmButtonText: 'ลบเลย',
-            cancelButtonText: 'ยกเลิก'
-        }).then(async (result) => {
-            if (result.isConfirmed) {
-                await fetch(`${API_URL}/events/${id}`, {method:'DELETE'});
-                fetchEvents();
-                Swal.fire({icon:'success', title:'ลบเรียบร้อย', showConfirmButton:false, timer:1000});
+async function deleteEvent(id) {
+    // ดึงข้อมูล User
+    const userInfo = JSON.parse(sessionStorage.getItem('user_info') || '{}');
+    // ใช้ encodeURIComponent เพื่อความปลอดภัย (เผื่ออีเมลมีตัวแปลกๆ)
+    const userEmail = encodeURIComponent(userInfo.email || 'Guest'); 
+
+    Swal.fire({
+        title: 'ยืนยันการลบ?',
+        text: "ข้อมูลจะถูกลบออกจากปฏิทินทันที",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: '#cbd5e1', // ปรับสีปุ่มยกเลิกให้ดูนวลตาขึ้น (Optional)
+        confirmButtonText: 'ลบเลย',
+        cancelButtonText: 'ยกเลิก'
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            try {
+                // ส่ง userEmail ไปทาง URL
+                const res = await fetch(`${API_URL}/events/${id}/${userEmail}`, {
+                    method: 'DELETE'
+                });
+
+                if (res.ok) {
+                    fetchEvents(); // โหลดข้อมูลใหม่
+                    Swal.fire({
+                        icon: 'success', 
+                        title: 'ลบเรียบร้อย', 
+                        showConfirmButton: false, 
+                        timer: 1000
+                    });
+                } else {
+                    Swal.fire('Error', 'ไม่สามารถลบข้อมูลได้', 'error');
+                }
+            } catch (err) {
+                Swal.fire('Error', 'เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
             }
-        });
-    }
+        }
+    });
+}
 
     function viewEvent(event) {
     // จัดรูปแบบวันที่เพื่อแสดงผล
