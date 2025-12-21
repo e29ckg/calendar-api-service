@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Control Panel</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-border: 1px solid rgba(255, 255, 255, 0.6);
+            --primary-color: #4f46e5;
+        }
+        body {
+            font-family: 'Kanit', sans-serif;
+            background: var(--bg-gradient);
+            min-height: 100vh;
+            color: #334155;
+            padding: 2rem 0;
+        }
+        .glass-panel {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            border-radius: 24px;
+            border: var(--glass-border);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            padding: 2rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .section-title {
+            color: var(--primary-color);
+            font-weight: 600;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .btn-sync {
+            transition: all 0.3s;
+            border-radius: 12px;
+            font-weight: 500;
+            padding: 12px;
+            border: none;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .btn-sync:hover { transform: translateY(-2px); box-shadow: 0 8px 15px rgba(0,0,0,0.15); }
+        .btn-1day { background: linear-gradient(45deg, #3b82f6, #2563eb); }
+        .btn-7day { background: linear-gradient(45deg, #10b981, #059669); }
+        .btn-30day { background: linear-gradient(45deg, #f59e0b, #d97706); }
+        .btn-60day { background: linear-gradient(45deg, #ef4444, #dc2626); }
+
+        .btn-config {
+            background: white;
+            color: #334155;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            padding: 15px;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: 0.2s;
+            font-weight: 500;
+        }
+        .btn-config:hover {
+            background: #f8fafc;
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+        .btn-back {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(255,255,255,0.5); border-radius: 50%; width: 40px; height: 40px;
+            display: flex; align-items: center; justify-content: center; color: #64748b;
+            text-decoration: none; transition: 0.2s;
+        }
+        .btn-back:hover { background: white; color: var(--primary-color); }
+
+        .btn-telegram { 
+            background: linear-gradient(45deg, #229ED9, #0088cc); 
+            color: white;
+        }
+        .btn-telegram:hover {
+            color: white;
+            box-shadow: 0 0 15px rgba(34, 158, 217, 0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <a href="/" class="btn-back" title="กลับหน้าหลัก"><i class="fas fa-arrow-left"></i></a>
+
+    <div class="container">
+        <div class="glass-panel">
+            <h2 class="text-center fw-bold mb-4">
+                <i class="fas fa-user-shield me-2 text-primary"></i>Admin Control Panel
+            </h2>
+
+            <div class="mb-5">
+                <h5 class="section-title"><i class="fas fa-sync-alt me-2"></i>อัปเดตข้อมูลคดี (Manual Sync)</h5>
+                <p class="text-muted small mb-3">กดปุ่มเพื่อสั่งดึงข้อมูลจากระบบงานคดีลงปฏิทินทันที (ระบบจะส่งสรุปผลเข้า Telegram เมื่อเสร็จสิ้น)</p>
+                
+                <div class="row g-3">
+                    <div class="col-6 col-md-3">
+                        <button class="btn btn-sync btn-1day w-100" onclick="triggerSync(1)">
+                            <i class="fas fa-calendar-day d-block mb-1 fs-4"></i> 1 วัน
+                        </button>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <button class="btn btn-sync btn-7day w-100" onclick="triggerSync(7)">
+                            <i class="fas fa-calendar-week d-block mb-1 fs-4"></i> 7 วัน
+                        </button>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <button class="btn btn-sync btn-30day w-100" onclick="triggerSync(30)">
+                            <i class="fas fa-calendar-alt d-block mb-1 fs-4"></i> 30 วัน
+                        </button>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <button class="btn btn-sync btn-60day w-100" onclick="triggerSync(60)">
+                            <i class="fas fa-layer-group d-block mb-1 fs-4"></i> 60 วัน
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="mb-5">
+                <h5 class="section-title"><i class="fas fa-bullhorn me-2"></i>ระบบแจ้งเตือน (Notifications)</h5>
+                <p class="text-muted small mb-3">ส่งรายการนัดพิจารณาประจำวันเข้า Telegram ทันที (Manual Trigger)</p>
+                
+                <div class="row g-3">
+                    <div class="col-12 col-md-6">
+                        <button class="btn btn-sync btn-telegram w-100" onclick="triggerCaseToday()">
+                            <i class="fab fa-telegram-plane d-block mb-1 fs-3"></i> 
+                            <span>ส่งแจ้งเตือน "คดีวันนี้"</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <h5 class="section-title"><i class="fas fa-cogs me-2"></i>ตั้งค่าระบบ (Configuration)</h5>
+                <p class="text-muted small mb-3">แก้ไข URL, User/Pass, Token Telegram และจัดการสิทธิ์ผู้ใช้</p>
+                
+                <a href="https://docs.google.com/spreadsheets/d/<%= sheetId %>" target="_blank" class="btn-config">
+                    <i class="fas fa-file-csv text-success fs-4"></i>
+                    <span>เปิดไฟล์ Google Sheet Config</span>
+                    <i class="fas fa-external-link-alt ms-auto text-muted small"></i>
+                </a>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script>
+        const API_URL = '<%= apiUrl %>';
+
+        // ฟังก์ชันสั่ง Sync ตามจำนวนวัน
+        async function triggerSync(days) {
+            
+            // 1. ถามยืนยันก่อน
+            const confirm = await Swal.fire({
+                title: `ยืนยันการ Sync ${days} วัน?`,
+                text: "ระบบจะดึงข้อมูลจากงานคดีและอัปเดตปฏิทิน อาจใช้เวลาสักครู่",
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#4f46e5',
+                confirmButtonText: 'เริ่มเลย',
+                cancelButtonText: 'ยกเลิก'
+            });
+
+            if (!confirm.isConfirmed) return;
+
+            // 2. แสดง Loading (ห้ามปิดจนกว่าจะเสร็จ)
+            Swal.fire({
+                title: 'กำลังทำงาน...',
+                html: 'ระบบกำลังดึงข้อมูลและอัปเดตปฏิทิน<br>โปรดอย่าปิดหน้านี้',
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading();
+                }
+            });
+
+            try {
+                // 3. ยิง API ไปที่ Backend
+                // ถ้า 1 วัน ให้ใช้ path /sync-cases/1
+                // แต่ถ้า fetch API ตรงๆ ต้องระวังเรื่อง Auth (checkToken) 
+                // ซึ่งใน app.js เราใส่ checkToken ไว้แล้ว มันจะทำงานอัตโนมัติที่หลังบ้าน
+                
+                const response = await fetch(`${API_URL}/sync-cases/${days}`);
+                const result = await response.json();
+
+                if (response.ok) {
+                    // 4. แสดงผลสำเร็จ
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'เรียบร้อย!',
+                        html: `
+                            <b>สรุปผลการทำงาน (${days} วัน):</b><br>
+                            ✅ เพิ่ม: ${result.summary.added}<br>
+                            ✏️ แก้ไข: ${result.summary.updated}<br>
+                            ⚠️ Error: ${result.summary.errors}<br>
+                            <small class="text-muted mt-2">แจ้งเตือนถูกส่งเข้า Telegram แล้ว</small>
+                        `
+                    });
+                } else {
+                    throw new Error(result.error || 'เกิดข้อผิดพลาด');
+                }
+
+            } catch (error) {
+                console.error(error);
+                Swal.fire({
+                    icon: 'error',
+                    title: 'ล้มเหลว',
+                    text: 'ไม่สามารถเชื่อมต่อกับ Server หรือระบบงานคดีได้'
+                });
+            }
+        }
+        // ฟังก์ชันส่งแจ้งเตือนคดีวันนี้ (Telegram)
+        async function triggerCaseToday() {
+            const confirm = await Swal.fire({
+                title: 'ยืนยันการส่ง?',
+                text: "ระบบจะดึงข้อมูลคดีวันนี้ และส่งเข้า Telegram ทันที",
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#229ED9',
+                confirmButtonText: 'ส่งเลย',
+                cancelButtonText: 'ยกเลิก'
+            });
+
+            if (!confirm.isConfirmed) return;
+
+            Swal.fire({
+                title: 'กำลังส่งข้อมูล...',
+                html: 'กรุณารอสักครู่ ระบบกำลังเชื่อมต่อ Telegram',
+                allowOutsideClick: false,
+                didOpen: () => { Swal.showLoading(); }
+            });
+
+            try {
+                // ยิงไปที่ Route /casetoday ของ Backend
+                const response = await fetch(`${API_URL}/casetoday`);
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'ส่งสำเร็จ!',
+                        text: `ส่งแจ้งเตือนเรียบร้อยแล้ว (จำนวน ${result.count} คดี)`
+                    });
+                } else {
+                    throw new Error(result.error || 'เกิดข้อผิดพลาดในการส่ง');
+                }
+
+            } catch (error) {
+                console.error(error);
+                Swal.fire({
+                    icon: 'error',
+                    title: 'ส่งไม่สำเร็จ',
+                    text: 'กรุณาตรวจสอบ Config Telegram หรือการเชื่อมต่อ Server'
+                });
+            }
+        }
+    </script>
+</body>
+</html>

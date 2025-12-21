@@ -199,23 +199,27 @@
 <div id="app-section" class="container py-4">
     
     <nav class="navbar-glass">
-        <div class="brand-logo">
-            <i class="fas fa-balance-scale"></i>
-            <span>CaseCalendar</span>
-        </div>
+    <div class="brand-logo">
+        <i class="fas fa-balance-scale"></i>
+        <span>CaseCalendar</span>
+    </div>
 
-        <div class="d-flex align-items-center">
-            <div class="user-chip">
-                <span id="navUserName" class="user-name">Loading...</span>
-                <img id="navUserImg" src="https://via.placeholder.com/40" class="user-avatar" alt="User">
-            </div>
-            
-            <button class="btn-logout" onclick="handleLogout()" title="ออกจากระบบ">
-                <i class="fas fa-power-off"></i>
-            </button>
-        </div>
-    </nav>
+    <div class="d-flex align-items-center gap-3">
+        
+        <a href="/admin" id="btnAdmin" class="btn btn-light rounded-pill px-3 fw-bold text-primary border" style="display: none; text-decoration: none;">
+            <i class="fas fa-user-shield me-1"></i> Admin
+        </a>
 
+        <div class="user-chip">
+            <span id="navUserName" class="user-name">Loading...</span>
+            <img id="navUserImg" src="https://via.placeholder.com/40" class="user-avatar" alt="User">
+        </div>
+        
+        <button class="btn-logout" onclick="handleLogout()" title="ออกจากระบบ">
+            <i class="fas fa-power-off"></i>
+        </button>
+    </div>
+</nav>
     <div class="row mb-4">
         <div class="col-md-8">
             <div class="glass-panel p-2 d-flex align-items-center gap-2">
@@ -314,7 +318,8 @@
             const res = await fetch(`${API_URL}/api/google-login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: response.credential })
+                body: JSON.stringify({ token: response.credential }),
+                credentials: 'include' // ส่งคุกกี้ไปด้วย
             });
             const data = await res.json();
 
@@ -346,8 +351,11 @@
             confirmButtonText: 'ออก',
             cancelButtonText: 'ยกเลิก',
             confirmButtonColor: '#ef4444'
-        }).then((result) => {
+        }).then(async (result) => {
             if (result.isConfirmed) {
+                try {
+                    await fetch(`${API_URL}/api/logout`, { method: 'POST' });
+                } catch (e) { console.error(e); }
                 sessionStorage.removeItem('app_auth');
                 sessionStorage.removeItem('user_info');
                 location.reload();
@@ -356,19 +364,25 @@
     }
 
     function showApp() {
-        document.getElementById('login-section').style.display = 'none';
-        document.getElementById('app-section').style.display = 'block';
+    document.getElementById('login-section').style.display = 'none';
+    document.getElementById('app-section').style.display = 'block';
 
-        // Update Navbar Profile
-        const userInfoStr = sessionStorage.getItem('user_info');
-        if(userInfoStr) {
-            const user = JSON.parse(userInfoStr);
-            document.getElementById('navUserName').innerText = user.name;
-            document.getElementById('navUserImg').src = user.picture;
-        }
+    // Update Navbar Profile
+    const userInfoStr = sessionStorage.getItem('user_info');
+    if(userInfoStr) {
+        const user = JSON.parse(userInfoStr);
+        document.getElementById('navUserName').innerText = user.name;
+        document.getElementById('navUserImg').src = user.picture;
 
-        initCalendar();
+        // --- เพิ่มส่วนนี้: เช็คว่าเป็น Admin หรือไม่ เพื่อโชว์ปุ่ม ---
+        // (จริงๆ Backend เช็คอีกรอบ แต่ Frontend เช็คเพื่อความสวยงามในการโชว์ปุ่ม)
+        // รายชื่อ Admin ที่อนุญาตให้เห็นปุ่ม (Hardcode ไว้หรือจะให้ Backend ส่งมาก็ได้)
+        // เพื่อความง่าย ให้โชว์ปุ่มไปเลย ถ้ากดแล้วไม่มีสิทธิ์ เดี๋ยว Backend ดีดออกมาเอง
+        document.getElementById('btnAdmin').style.display = 'flex'; 
     }
+
+    initCalendar();
+}
 
     // --- Calendar Logic ---
     function initCalendar() {

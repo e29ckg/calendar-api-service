@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const { google } = require('googleapis');
 const { OAuth2Client } = require('google-auth-library');
 const bodyParser = require('body-parser');
@@ -12,40 +13,60 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// 1. ตั้งค่า EJS
+// 1. ตั้งค่า Cookie Parser (ใช้ Secret จาก .env)
+const COOKIE_SECRET = process.env.COOKIE_SECRET || 'fallback_secret_key';
+app.use(cookieParser(COOKIE_SECRET));
+
+// 2. ตั้งค่า EJS
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.static(__dirname));
 
-// --- Environment Variables (ค่าคงที่) ---
+// --- 3. Environment Variables (โหลดค่าจาก .env) ---
+const PORT = process.env.PORT || 3000;
+const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
+
+// Google Config
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID;
-const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID; 
+const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
 
-// --- Google Client Setup ---
+// Case System API Config (จาก .env)
+const API_URL = process.env.API_URL;   // http://localhost:8089
+const API_USER = process.env.API_USER; // 1223
+const API_PASS = process.env.API_PASS; // 1234
+let GLOBAL_TOKEN = process.env.TOKEN || null; // Token เริ่มต้น
+
+// --- 4. Google Client Setup ---
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 const SCOPES = [
     'https://www.googleapis.com/auth/calendar',
     'https://www.googleapis.com/auth/spreadsheets'
 ];
 
+// แปลง GOOGLE_CREDENTIALS จาก String เป็น Object
+let googleCredentials;
+try {
+    googleCredentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+} catch (e) {
+    console.error('Error parsing GOOGLE_CREDENTIALS:', e.message);
+}
+
 const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
+    credentials: googleCredentials,
     scopes: SCOPES,
 });
 
 const calendar = google.calendar({ version: 'v3', auth });
 const sheets = google.sheets({ version: 'v4', auth });
 
-// --- Global Variables (Runtime) ---
-let TOKEN = process.env.TOKEN || null; // Token ระบบงานคดี
 
 // ==========================================
-// Helper Functions: Config & Sheet
+// Helper Functions
 // ==========================================
 
-// 1. ดึงค่า Config ระบบทั้งหมดจาก Sheet 'Config'
-async function getSystemConfig() {
+// 1. ดึง Telegram Config จาก Sheet (ยังคงไว้ใน Sheet เพื่อความยืดหยุ่น)
+async function getTelegramConfig() {
     try {
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
@@ -63,44 +84,35 @@ async function getSystemConfig() {
         });
 
         return {
-            appUrl: config['APP_URL'], 
-            telegram: {
-                token: config['TELEGRAM_TOKEN'],
-                chatId: config['CHAT_ID']
-            },
-            api: {
-                baseUrl: config['BASE_URL'], 
-                user: config['API_USER'],
-                pass: config['API_PASS']
-            }
+            token: config['TELEGRAM_TOKEN'],
+            chatId: config['CHAT_ID'],
+            tokenAdmin: config['ADMIN_TELEGRAM_TOKEN'],
+            chatIdAdmin: config['ADMIN_CHAT_ID']
         };
 
     } catch (error) {
-        console.error('Error fetching system config:', error.message);
+        console.error('Error fetching Telegram config:', error.message);
         return null;
     }
 }
 
-// 2. ดึงรายชื่อ Email ที่อนุญาตจาก Sheet 'Users'
+// 2. ดึงรายชื่อ Email จาก Sheet 'Users'
 async function getAllowedEmails() {
     try {
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
             range: 'Users!A2:A',
         });
-
         const rows = response.data.values;
         if (!rows || rows.length === 0) return [];
-
         return rows.map(row => row[0] ? row[0].trim().toLowerCase() : '');
-
     } catch (error) {
         console.error('Error fetching allowed users:', error.message);
         return [];
     }
 }
 
-// 3. บันทึก Log ลง Google Sheet
+// 3. บันทึก Log
 async function logToSheet(action, eventData, performedBy = 'System') {
     try {
         const values = [[
@@ -112,20 +124,18 @@ async function logToSheet(action, eventData, performedBy = 'System') {
             JSON.stringify(eventData.end) || '-',
             new Date().toLocaleString('th-TH')
         ]];
-
         await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID,
             range: 'Logs!A:G',
             valueInputOption: 'RAW',
             resource: { values },
         });
-
     } catch (error) {
         console.error('Error logging to sheet:', error.message);
     }
 }
 
-// 4. แปลงวันที่สำหรับ API งานคดี (DD/MM/YYYY พ.ศ.)
+// 4. แปลงวันที่ (DD/MM/YYYY พ.ศ.)
 function getBuddhistDateString(date) {
     const d = new Date(date);
     const day = String(d.getDate()).padStart(2, '0');
@@ -135,53 +145,53 @@ function getBuddhistDateString(date) {
 }
 
 // ==========================================
-// Middleware: Check & Renew Token (Dynamic)
+// Middleware
 // ==========================================
+
+// 1. Check Token (ใช้ค่าจาก .env มา Renew)
 const checkToken = async (req, res, next) => {
     try {
-        // 1. ดึง Config ล่าสุดจาก Sheet
-        const sysConfig = await getSystemConfig();
-        
-        if (!sysConfig || !sysConfig.api.baseUrl || !sysConfig.api.user) {
-            console.error('❌ API Config missing in Google Sheet');
-            return res.status(500).json({ error: 'System Config Error' });
-        }
-
-        // แนบ config ไปกับ request เพื่อให้ route อื่นใช้ต่อได้
-        req.sysConfig = sysConfig;
-
-        // 2. ถ้ามี Token อยู่แล้ว ให้ผ่านไปก่อน (หรือจะเพิ่ม Logic เช็ค Expire ก็ได้)
-        if (TOKEN) {
+        // ถ้ามี Token อยู่แล้ว ให้ผ่านไป
+        if (GLOBAL_TOKEN) {
             next();
             return;
         }
 
-        // 3. ถ้าไม่มี Token ให้ขอใหม่ โดยใช้ User/Pass จาก Sheet
         console.log('🔄 Renewing Token from Case System...');
-        const loginUrl = `${sysConfig.api.baseUrl}/jvncUser/api/v1/users/login`;
-        // หมายเหตุ: เช็ค URL Login ของระบบคุณอีกทีว่าใช้ path ไหนแน่ (jvncUser หรือ jvncProceed)
-        // ตามโค้ดเก่าใช้: /jvncUser/api/v1/users/login
         
-        const postBody = { 
-            "version": 1, 
-            "name": sysConfig.api.user, 
-            "passwords": sysConfig.api.pass 
-        };
+        // ใช้ค่าจาก .env โดยตรง
+        const loginUrl = `${API_URL}/jvncUser/api/v1/users/login`; 
+        const postBody = { "version": 1, "name": API_USER, "passwords": API_PASS };
 
         const response = await axios.post(loginUrl, postBody);
         const authHeader = response.headers.authorization;
 
         if (authHeader) {
-            TOKEN = authHeader.replace("Bearer ", "");
+            GLOBAL_TOKEN = authHeader.replace("Bearer ", "");
             console.log('✅ Token Updated Successfully');
             next();
         } else {
             throw new Error('No Authorization header received');
         }
-
     } catch (error) {
         console.error('Check Token Error:', error.message);
-        res.status(500).json({ error: 'Cannot connect to Case System (Check Config/VPN)' });
+        res.status(500).json({ error: 'Cannot connect to Case System API' });
+    }
+};
+
+// 2. Check Admin Auth (Cookie)
+const checkAdminAuth = async (req, res, next) => {
+    const userEmail = req.signedCookies.user_email;
+    if (!userEmail) {
+        console.log('⛔ Admin Access Blocked: No Cookie');
+        return res.redirect('/'); 
+    }
+
+    const allowedList = await getAllowedEmails();
+    if (allowedList.includes(userEmail)) {
+        next();
+    } else {
+        res.status(403).send('<h1>403 Forbidden</h1><p>Access Denied</p>');
     }
 };
 
@@ -189,48 +199,49 @@ const checkToken = async (req, res, next) => {
 // Routes
 // ==========================================
 
-// Route: หน้าแรก (Render UI)
-app.get('/', async (req, res) => {
-    const sysConfig = await getSystemConfig();
-    const currentAppUrl = sysConfig?.appUrl || 'http://localhost:3000';
-
+// หน้าแรก
+app.get('/', (req, res) => {
     res.render('index', { 
         googleClientId: GOOGLE_CLIENT_ID,
-        apiUrl: currentAppUrl
+        apiUrl: APP_URL
     });
 });
 
-// Route: API Login (Google)
+// หน้า Admin
+app.get('/admin', checkAdminAuth, (req, res) => {
+    res.render('admin', { 
+        sheetId: SPREADSHEET_ID, 
+        apiUrl: APP_URL
+    });
+});
+
+// API Login (Google) -> ฝัง Cookie
 app.post('/api/google-login', async (req, res) => {
     const { token } = req.body;
     try {
-        const ticket = await client.verifyIdToken({
-            idToken: token,
-            audience: GOOGLE_CLIENT_ID,
-        });
+        const ticket = await client.verifyIdToken({ idToken: token, audience: GOOGLE_CLIENT_ID });
         const payload = ticket.getPayload();
         const email = payload.email.toLowerCase();
 
-        console.log(`Checking permission for: ${email}`);
+        console.log(`Checking permission: ${email}`);
         const allowedList = await getAllowedEmails();
 
         if (allowedList.includes(email)) {
             console.log(`✅ Login Success: ${email}`);
-            
-            // Log การเข้าใช้งาน
-            logToSheet('LOGIN', { id: '-', summary: 'User Login' }, email);
 
-            res.json({ 
-                success: true, 
-                user: { 
-                    name: payload.name, 
-                    email: email, 
-                    picture: payload.picture 
-                } 
+            // ฝัง Cookie
+            res.cookie('user_email', email, { 
+                signed: true,       
+                httpOnly: true,     
+                maxAge: 24 * 60 * 60 * 1000,
+                sameSite: 'lax',
+                secure: false // true ถ้าใช้ https
             });
+            
+            logToSheet('LOGIN', { id: '-', summary: 'User Login' }, email);
+            res.json({ success: true, user: { name: payload.name, email: email, picture: payload.picture } });
         } else {
-            console.log(`❌ Access Denied: ${email}`);
-            res.status(403).json({ success: false, message: 'Access Denied: Email not in whitelist.' });
+            res.status(403).json({ success: false, message: 'Email not in whitelist.' });
         }
     } catch (error) {
         console.error('Login Error:', error);
@@ -238,28 +249,28 @@ app.post('/api/google-login', async (req, res) => {
     }
 });
 
-// Route: Google Calendar (Get Events)
+// API Logout
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('user_email');
+    res.json({ success: true });
+});
+
+// Google Calendar Events
 app.get('/events', async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
         const timeMin = startDate ? new Date(startDate).toISOString() : new Date().toISOString();
         const timeMax = endDate ? new Date(endDate).toISOString() : undefined;
-
         const response = await calendar.events.list({
             calendarId: CALENDAR_ID,
-            timeMin, timeMax,
-            singleEvents: true,
-            orderBy: 'startTime',
+            timeMin, timeMax, singleEvents: true, orderBy: 'startTime',
         });
-
         res.json({ events: response.data.items });
     } catch (error) {
-        console.error('Error fetching events:', error);
         res.status(500).json({ error: 'Failed to fetch events' });
     }
 });
 
-// Route: Create Event
 app.post('/events', async (req, res) => {
     try {
         const { summary, description, start, end, isAllDay, userEmail } = req.body;
@@ -272,40 +283,28 @@ app.post('/events', async (req, res) => {
         await logToSheet('MANUAL-CREATE', response.data , userEmail || 'Unknown User');
         res.json({ message: 'Success', eventId: response.data.id });
     } catch (error) {
-        console.error('Error:', error);
         res.status(500).json({ error: 'Failed' });
     }
 });
 
-// Route: Update Event
 app.put('/events/:eventId', async (req, res) => {
     try {
         const eventId = req.params.eventId;
         const { summary, description, start, end, isAllDay, userEmail } = req.body;
         const oldEvent = await calendar.events.get({ calendarId: CALENDAR_ID, eventId });
-        
         const updatedEvent = {
-            ...oldEvent.data,
-            summary: summary || oldEvent.data.summary,
-            description: description || oldEvent.data.description,
-            start: isAllDay 
-                ? { date: start, dateTime: null, timeZone: null } 
-                : (start ? { dateTime: start, timeZone: 'Asia/Bangkok', date: null } : oldEvent.data.start),
-            end: isAllDay 
-                ? { date: end, dateTime: null, timeZone: null }
-                : (end ? { dateTime: end, timeZone: 'Asia/Bangkok', date: null } : oldEvent.data.end),
+            ...oldEvent.data, summary, description,
+            start: isAllDay ? { date: start, dateTime: null } : (start ? { dateTime: start } : oldEvent.data.start),
+            end: isAllDay ? { date: end, dateTime: null } : (end ? { dateTime: end } : oldEvent.data.end),
         };
-        
         const response = await calendar.events.update({ calendarId: CALENDAR_ID, eventId, resource: updatedEvent });
         await logToSheet('MANUAL-UPDATE', response.data, userEmail || 'Unknown User');
         res.json({ message: 'Updated', event: response.data });
     } catch (error) {
-        console.error('Error:', error);
         res.status(500).json({ error: 'Failed' });
     }
 });
 
-// Route: Delete Event
 app.delete('/events/:eventId/:userEmail', async (req, res) => {
     try {
         const { eventId, userEmail } = req.params;
@@ -314,32 +313,30 @@ app.delete('/events/:eventId/:userEmail', async (req, res) => {
         await logToSheet('MANUAL-DELETE', oldEvent.data, userEmail || 'Unknown User');
         res.json({ message: 'Deleted' });
     } catch (error) {
-        console.error('Error deleting:', error.message);
         res.status(500).json({ error: 'Failed' });
     }
 });
 
-// Route: Notify Today Cases (Telegram Only)
+// Notify Today Cases (Telegram)
 app.get('/casetoday', checkToken, async (req, res) => {
     try {
         console.log('--- Sending Today Cases Notification (Telegram) ---');
+        const telegram = await getTelegramConfig();
         
-        // รับค่า Config ที่ได้จาก checkToken (ไม่ต้องดึงซ้ำ)
-        const { telegram, api } = req.sysConfig;
-        
-        if (!telegram.token || !telegram.chatId) {
-            return res.status(500).json({ error: 'Telegram config missing' });
+        if (!telegram || !telegram.token || !telegram.chatId) {
+            return res.status(500).json({ error: 'Telegram config missing in Sheet' });
         }
 
         const today = new Date();
         const dateForApi = getBuddhistDateString(today);
         const dateShow = today.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-        const url = `${api.baseUrl}/jvncProceed/api/v1/proceed/searchElectronicAppointDateByCase/search?version=1`;
+        const url = `${API_URL}/jvncProceed/api/v1/proceed/searchElectronicAppointDateByCase/search?version=1`;
         const postBody = { "version": 1, "appointDate": dateForApi, "offset": 0, "limit": 200 };
-        const config = { headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } };
-
-        const apiRes = await axios.post(url, postBody, config);
+        
+        const apiRes = await axios.post(url, postBody, { 
+            headers: { 'Authorization': `Bearer ${GLOBAL_TOKEN}`, 'Content-Type': 'application/json' } 
+        });
         const data = apiRes.data;
 
         let message = `📅 <b>รายการนัดพิจารณาประจำวัน</b>\n${dateShow}\n--------------------------------\n`;
@@ -352,7 +349,7 @@ app.get('/casetoday', checkToken, async (req, res) => {
 
             cases.forEach((item, index) => {
                 const shortTime = item.appointTime ? item.appointTime.substring(0, 5) : 'ไม่ระบุ';
-                message += `<b>${index + 1}. ${item.fullCaseId}</b>\n   🕒 ${shortTime} น. | 🏛️ ห้อง ${item.roomName}\n   📝 ${item.reasonName}\n\n`;
+                message += `<b>${index + 1}. ${item.fullCaseId}</b>\n   🕒 ${shortTime} น. | 🏛️ ห้อง ${item.roomName}\n   📝 ${item.reasonName}\n\n`;
             });
             message += `--------------------------------\nรวมทั้งหมด: <b>${caseCount}</b> คดี`;
         } else {
@@ -374,26 +371,22 @@ app.get('/casetoday', checkToken, async (req, res) => {
     }
 });
 
-// ==========================================
-// Sync Data: สรุปยอดคดีรายวัน (Daily Summary)
-// GET /sync-cases
-// ==========================================
-app.get('/sync-cases', checkToken, async (req, res) => {
-    const DAYS_TO_FETCH = 30;
+// Handler: Sync Logic
+const handleSyncCases = async (req, res) => {
+    let daysToFetch = parseInt(req.params.days) || 7;
+    if (daysToFetch > 90) daysToFetch = 90;
     const results = { added: 0, updated: 0, skipped: 0, errors: 0 };
     
-    // ดึง Config ทั้ง API และ Telegram จาก req.sysConfig
-    const { api, telegram } = req.sysConfig; 
+    const telegram = await getTelegramConfig(); // ดึง Telegram Config
 
     try {
-        console.log(`--- Syncing Daily Summary (${DAYS_TO_FETCH} days) ---`);
+        console.log(`--- Syncing Daily Summary (${daysToFetch} days) ---`);
 
-        for (let i = 0; i < DAYS_TO_FETCH; i++) {
+        for (let i = 0; i < daysToFetch; i++) {
             const currentDate = new Date();
             currentDate.setDate(currentDate.getDate() + i); 
             const dateForApi = getBuddhistDateString(currentDate); 
             
-            // แปลงวันที่สำหรับ Google Calendar (YYYY-MM-DD)
             const yyyyEN = currentDate.getFullYear();
             const mm = String(currentDate.getMonth() + 1).padStart(2, '0');
             const dd = String(currentDate.getDate()).padStart(2, '0');
@@ -403,17 +396,14 @@ app.get('/sync-cases', checkToken, async (req, res) => {
             nextDay.setDate(nextDay.getDate() + 1);
             const nextDayISO = nextDay.toISOString().split('T')[0];
 
-            // ยิง API งานคดี
-            const url = `${api.baseUrl}/jvncProceed/api/v1/proceed/searchElectronicAppointDateByCase/search?version=1`;
+            const url = `${API_URL}/jvncProceed/api/v1/proceed/searchElectronicAppointDateByCase/search?version=1`;
             const postBody = { "version": 1, "appointDate": dateForApi, "offset": 0, "limit": 200 };
             
             try {
                 const apiRes = await axios.post(url, postBody, { 
-                    headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } 
+                    headers: { 'Authorization': `Bearer ${GLOBAL_TOKEN}`, 'Content-Type': 'application/json' } 
                 });
-                
                 const data = apiRes.data;
-                // ถ้าไม่มีข้อมูล ให้ข้าม
                 if (!data.success || !data.data || data.data.length === 0) continue;
 
                 const cases = data.data;
@@ -423,7 +413,7 @@ app.get('/sync-cases', checkToken, async (req, res) => {
                 let descriptionList = `สรุปรายการนัดหมายประจำวันที่ ${dateForApi}\n----------------------------\n`;
                 cases.forEach((item, index) => {
                     const shortTime = item.appointTime ? item.appointTime.substring(0, 5) : 'ไม่ระบุ';
-                    descriptionList += `${index + 1}. ${item.fullCaseId} (${item.reasonName})\n   ห้อง: ${item.roomName} | เวลา: ${shortTime} น.\n\n`;
+                    descriptionList += `${index + 1}. ${item.fullCaseId} (${item.reasonName})\n   ห้อง: ${item.roomName} | เวลา: ${shortTime} น.\n\n`;
                 });
                 descriptionList += `(Updated: ${new Date().toLocaleString('th-TH')})`;
 
@@ -434,7 +424,6 @@ app.get('/sync-cases', checkToken, async (req, res) => {
                     end: { date: nextDayISO }
                 };
 
-                // เช็คว่ามี Event เดิมไหม
                 const existingEvents = await calendar.events.list({
                     calendarId: CALENDAR_ID,
                     timeMin: `${dateISO}T00:00:00Z`,
@@ -444,69 +433,48 @@ app.get('/sync-cases', checkToken, async (req, res) => {
                 });
 
                 if (existingEvents.data.items.length > 0) {
-                    await calendar.events.update({
-                        calendarId: CALENDAR_ID,
-                        eventId: existingEvents.data.items[0].id,
-                        resource: eventResource
-                    });
-                    // Log แบบ Summary (Update)
+                    await calendar.events.update({ calendarId: CALENDAR_ID, eventId: existingEvents.data.items[0].id, resource: eventResource });
                     await logToSheet('DAILY-UPDATE', { id: existingEvents.data.items[0].id, summary: eventResource.summary }, 'Auto-Bot');
                     results.updated++;
                 } else {
-                    const response = await calendar.events.insert({
-                        calendarId: CALENDAR_ID,
-                        resource: eventResource,
-                    });
-                    // Log แบบ Summary (Create)
+                    const response = await calendar.events.insert({ calendarId: CALENDAR_ID, resource: eventResource });
                     await logToSheet('DAILY-CREATE', { id: response.data.id, summary: eventResource.summary }, 'Auto-Bot');
                     results.added++;
                 }
-
             } catch (innerError) {
-                // ข้าม Error ปกติ (เช่น ไม่พบคดี หรือ Success = false)
                 if (innerError.response && innerError.response.data.success === false) continue;
-                console.error(`Error processing ${dateForApi}:`, innerError.message);
                 results.errors++;
             }
-        } // จบลูป for
+        } 
 
-        // =========================================================
-        // ✨ ส่งสรุปผลเข้า Telegram (เพิ่มส่วนนี้)
-        // =========================================================
-        if (telegram && telegram.token && telegram.chatId) {
+        // ส่งสรุปเข้า Telegram Admin
+        if (telegram && telegram.tokenAdmin && telegram.chatIdAdmin) {
             try {
-                const message = `🔄 <b>สรุปผลการซิงค์ข้อมูลรายวัน</b>\n` +
+                const message = `🔄 <b>สรุปผลการซิงค์ข้อมูล (${daysToFetch} วัน)</b>\n` +
                                 `--------------------------------\n` +
-                                `✅ เพิ่มรายการใหม่: <b>${results.added}</b> วัน\n` +
-                                `✏️ ปรับปรุงข้อมูล: <b>${results.updated}</b> วัน\n` +
-                                `⚠️ ข้อผิดพลาด: <b>${results.errors}</b> ครั้ง\n` +
-                                `--------------------------------\n` +
+                                `✅ เพิ่ม: <b>${results.added}</b> วัน | ✏️ ปรับปรุง: <b>${results.updated}</b> วัน\n` +
+                                `⚠️ Error: <b>${results.errors}</b>\n` +
                                 `⏰ เวลา: ${new Date().toLocaleString('th-TH')}`;
-
-                await axios.post(`https://api.telegram.org/bot${telegram.token}/sendMessage`, {
-                    chat_id: telegram.chatId,
+                await axios.post(`https://api.telegram.org/bot${telegram.tokenAdmin}/sendMessage`, {
+                    chat_id: telegram.chatIdAdmin,
                     text: message,
                     parse_mode: 'HTML'
                 });
-                console.log('✅ Telegram summary sent.');
-            } catch (tgError) {
-                console.error('❌ Failed to send Telegram summary:', tgError.message);
-            }
+            } catch (tgError) { console.error('Telegram Admin Error:', tgError.message); }
         }
 
-        // ส่ง Response กลับหน้าเว็บ
-        res.json({ message: 'Sync Completed', summary: results });
-
+        res.json({ message: `Sync Completed for ${daysToFetch} days`, summary: results });
     } catch (error) {
         console.error('Fatal Sync Error:', error);
         res.status(500).json({ error: 'Sync Failed' });
     }
-});
+};
 
-// ==========================================
+// Sync Routes
+app.get('/sync-cases', checkToken, handleSyncCases);
+app.get('/sync-cases/:days', checkToken, handleSyncCases);
 
-// Start Server
-const PORT = process.env.PORT || 3000;
+// Start
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
