@@ -503,10 +503,7 @@ app.get('/sync-cases', checkToken, async (req, res) => {
     }
 });
 
-// Route Test Token (Optional)
-app.get('/manual-token', checkToken, (req, res) => {
-    res.json({ message: 'Token Active', token_preview: TOKEN ? TOKEN.substring(0, 10) + '...' : 'None' });
-});
+// ==========================================
 
 // Start Server
 const PORT = process.env.PORT || 3000;
