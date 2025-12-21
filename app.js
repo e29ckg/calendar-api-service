@@ -20,7 +20,7 @@ app.use(express.static(__dirname));
 // --- Environment Variables (ค่าคงที่) ---
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID;
-const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID; // ใช้ชื่อนี้เป็นหลัก
+const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID; 
 
 // --- Google Client Setup ---
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -48,7 +48,7 @@ let TOKEN = process.env.TOKEN || null; // Token ระบบงานคดี
 async function getSystemConfig() {
     try {
         const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID, // แก้เป็น SPREADSHEET_ID
+            spreadsheetId: SPREADSHEET_ID,
             range: 'Config!A2:B', 
         });
 
