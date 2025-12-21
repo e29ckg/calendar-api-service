@@ -69,7 +69,7 @@ async function getSystemConfig() {
                 chatId: config['CHAT_ID']
             },
             api: {
-                baseUrl: config['BASE_URL'], // สำคัญ: ใน Sheet ห้ามมี / ปิดท้าย
+                baseUrl: config['BASE_URL'], 
                 user: config['API_USER'],
                 pass: config['API_PASS']
             }
