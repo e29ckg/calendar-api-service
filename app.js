@@ -374,11 +374,16 @@ app.get('/casetoday', checkToken, async (req, res) => {
     }
 });
 
-// Route: Sync Daily Summary
+// ==========================================
+// Sync Data: สรุปยอดคดีรายวัน (Daily Summary)
+// GET /sync-cases
+// ==========================================
 app.get('/sync-cases', checkToken, async (req, res) => {
     const DAYS_TO_FETCH = 30;
     const results = { added: 0, updated: 0, skipped: 0, errors: 0 };
-    const { api } = req.sysConfig; // ใช้ Config จาก Sheet
+    
+    // ดึง Config ทั้ง API และ Telegram จาก req.sysConfig
+    const { api, telegram } = req.sysConfig; 
 
     try {
         console.log(`--- Syncing Daily Summary (${DAYS_TO_FETCH} days) ---`);
@@ -408,6 +413,7 @@ app.get('/sync-cases', checkToken, async (req, res) => {
                 });
                 
                 const data = apiRes.data;
+                // ถ้าไม่มีข้อมูล ให้ข้าม
                 if (!data.success || !data.data || data.data.length === 0) continue;
 
                 const cases = data.data;
@@ -443,6 +449,7 @@ app.get('/sync-cases', checkToken, async (req, res) => {
                         eventId: existingEvents.data.items[0].id,
                         resource: eventResource
                     });
+                    // Log แบบ Summary (Update)
                     await logToSheet('DAILY-UPDATE', { id: existingEvents.data.items[0].id, summary: eventResource.summary }, 'Auto-Bot');
                     results.updated++;
                 } else {
@@ -450,17 +457,44 @@ app.get('/sync-cases', checkToken, async (req, res) => {
                         calendarId: CALENDAR_ID,
                         resource: eventResource,
                     });
+                    // Log แบบ Summary (Create)
                     await logToSheet('DAILY-CREATE', { id: response.data.id, summary: eventResource.summary }, 'Auto-Bot');
                     results.added++;
                 }
 
             } catch (innerError) {
-                // ข้าม Error ปกติ (เช่น ไม่พบคดี)
+                // ข้าม Error ปกติ (เช่น ไม่พบคดี หรือ Success = false)
                 if (innerError.response && innerError.response.data.success === false) continue;
                 console.error(`Error processing ${dateForApi}:`, innerError.message);
                 results.errors++;
             }
+        } // จบลูป for
+
+        // =========================================================
+        // ✨ ส่งสรุปผลเข้า Telegram (เพิ่มส่วนนี้)
+        // =========================================================
+        if (telegram && telegram.token && telegram.chatId) {
+            try {
+                const message = `🔄 <b>สรุปผลการซิงค์ข้อมูลรายวัน</b>\n` +
+                                `--------------------------------\n` +
+                                `✅ เพิ่มรายการใหม่: <b>${results.added}</b> วัน\n` +
+                                `✏️ ปรับปรุงข้อมูล: <b>${results.updated}</b> วัน\n` +
+                                `⚠️ ข้อผิดพลาด: <b>${results.errors}</b> ครั้ง\n` +
+                                `--------------------------------\n` +
+                                `⏰ เวลา: ${new Date().toLocaleString('th-TH')}`;
+
+                await axios.post(`https://api.telegram.org/bot${telegram.token}/sendMessage`, {
+                    chat_id: telegram.chatId,
+                    text: message,
+                    parse_mode: 'HTML'
+                });
+                console.log('✅ Telegram summary sent.');
+            } catch (tgError) {
+                console.error('❌ Failed to send Telegram summary:', tgError.message);
+            }
         }
+
+        // ส่ง Response กลับหน้าเว็บ
         res.json({ message: 'Sync Completed', summary: results });
 
     } catch (error) {
