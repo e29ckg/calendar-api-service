@@ -198,24 +198,26 @@
 
 <div id="app-section" class="container py-4">
     
-    <nav class="navbar-glass">
-    <div class="brand-logo">
-        <i class="fas fa-balance-scale"></i>
-        <span>CaseCalendar</span>
+    <nav class="navbar-glass px-3 py-2">
+    <div class="brand-logo d-flex align-items-center">
+        <i class="fas fa-balance-scale fs-4 text-primary"></i>
+        <span class="d-none d-sm-inline ms-2 fw-bold text-primary">CaseCalendar</span>
     </div>
 
-    <div class="d-flex align-items-center gap-3">
+    <div class="d-flex align-items-center gap-2">
         
-        <a href="/admin" id="btnAdmin" class="btn btn-light rounded-pill px-3 fw-bold text-primary border" style="display: none; text-decoration: none;">
-            <i class="fas fa-user-shield me-1"></i> Admin
+        <a href="/admin" id="btnAdmin" class="btn btn-sm btn-light rounded-pill px-2 px-md-3 fw-bold text-primary border" style="display: none; text-decoration: none;">
+            <i class="fas fa-user-shield"></i>
+            <span class="d-none d-md-inline ms-1">Admin</span>
         </a>
 
-        <div class="user-chip">
-            <span id="navUserName" class="user-name">Loading...</span>
-            <img id="navUserImg" src="https://via.placeholder.com/40" class="user-avatar" alt="User">
+        <div class="user-chip d-flex align-items-center bg-white rounded-pill px-2 py-1 border shadow-sm">
+            <span id="navUserName" class="user-name d-none d-md-block me-2 small fw-bold text-secondary" style="max-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Loading...</span>
+            
+            <img id="navUserImg" src="https://via.placeholder.com/40" class="rounded-circle" width="32" height="32" alt="User" style="object-fit: cover;">
         </div>
         
-        <button class="btn-logout" onclick="handleLogout()" title="ออกจากระบบ">
+        <button class="btn btn-sm btn-danger rounded-circle d-flex align-items-center justify-content-center" onclick="handleLogout()" title="ออกจากระบบ" style="width: 32px; height: 32px;">
             <i class="fas fa-power-off"></i>
         </button>
     </div>
