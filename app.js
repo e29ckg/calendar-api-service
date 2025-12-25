@@ -404,6 +404,146 @@ app.get('/casetoday', checkToken, async (req, res) => {
     }
 });
 
+// ==========================================
+// Helper: ดึงข้อมูลผู้พิพากษา (Active Judges)
+// ==========================================
+async function getActiveJudges() {
+    const url = `${API_URL}/jvncLookup/api/v1/judges/listAllActivedWork?version=1`;
+    try {
+        const config = {
+            headers: {
+                'Authorization': `Bearer ${GLOBAL_TOKEN}`,
+                'Content-Type': 'application/json'
+            }
+        };
+        const response = await axios.get(url, config);
+        const judges = response.data.data;
+        
+        if (!judges || judges.length === 0) return [];
+
+        // Filter เฉพาะผู้พิพากษา (status = 1) และ Map ข้อมูล
+        return judges
+            .filter(j => j.judgeStatus === 1)
+            .map(item => ({
+                judgeId: item.id,
+                judgeName: item.judgeName
+            }));
+
+    } catch (error) {
+        console.error('Error fetching judges:', error.message);
+        return [];
+    }
+}
+
+// ==========================================
+// Route: แจ้งเตือนเวรชี้ (Judge Schedule)
+// GET /judgeschedule
+// ==========================================
+app.get('/judgeschedule', checkToken, async (req, res) => {
+    try {
+        console.log('--- Checking Judge Schedule ---');
+        
+        // 1. เตรียม Config
+        const telegram = await getTelegramConfig();
+        
+        if (!telegram || !telegram.token || !telegram.chatId) {
+            return res.status(500).json({ error: 'Telegram config missing in Sheet' });
+        }
+
+        // 2. จัดการเรื่องวันเวลา (Timezone Thailand)
+        const now = new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' });
+        const today = new Date(now);
+        
+        const day = String(today.getDate()).padStart(2, '0');
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const year = today.getFullYear();
+        const yearTH = year + 543;
+
+        // รูปแบบสำหรับ URL API (MM/YYYY ค.ศ.)
+        const urlDate = `${month}/${year}`; 
+        
+        // รูปแบบสำหรับ Filter ข้อมูล (DD/MM/YYYY พ.ศ. 00:00:00)
+        const targetDateStr = `${day}/${month}/${yearTH} 00:00:00`;
+
+        console.log(`Checking schedule for: ${targetDateStr}`);
+
+        // 3. ดึงรายชื่อผู้พิพากษารอไว้
+        const activeJudges = await getActiveJudges();
+
+        // 4. ดึงตารางเวรจาก API
+        const url = `${API_URL}/jvncManager/api/v1/managerjudgepool/judgeschedule/${urlDate}/0?version=1.0&offset=0&limit=100`;
+        const config = {
+            headers: {
+                'Authorization': `Bearer ${GLOBAL_TOKEN}`,
+                'Content-Type': 'application/json'
+            }
+        };
+
+        const response = await axios.get(url, config);
+        
+        if (!response.data || !response.data.data) {
+            throw new Error('No schedule data from API');
+        }
+
+        // 5. หาเวรของ "วันนี้"
+        const dailySchedule = response.data.data.filter(item => item.poolDate === targetDateStr);
+        
+        let message = '';
+        let foundData = null;
+
+        if (dailySchedule.length === 0) {
+            // กรณีไม่มีเวร
+            message = `⚖️ <b>เวรชี้ประจำวันที่ ${day}/${month}/${yearTH}</b>\n` +
+                      `--------------------------------\n` +
+                      `❌ <i>ไม่พบข้อมูลเวรชี้ในระบบ</i>`;
+        } else {
+            // กรณีเจอเวร
+            foundData = dailySchedule[0];
+            
+            // แมพชื่อผู้พิพากษา
+            const judgeInfo = activeJudges.find(j => j.judgeId === foundData.judgeId);
+            const judgeName = judgeInfo ? judgeInfo.judgeName : `Unknown ID: ${foundData.judgeId}`; // ถ้าไม่เจอชื่อ ให้โชว์ ID แทน
+            
+            foundData.judgeName = judgeName; // แปะชื่อกลับเข้าไปใน Object เพื่อ return json
+
+            message = `⚖️ <b>เวรชี้ประจำวันที่ ${day}/${month}/${yearTH}</b>\n` +
+                      `--------------------------------\n` +
+                      `👨‍⚖️ <b>${judgeName}</b>`;
+        }
+
+        // 6. ส่งเข้า Telegram
+        if (telegram && telegram.token && telegram.chatId) {
+            await axios.post(`https://api.telegram.org/bot${telegram.token}/sendMessage`, {
+                chat_id: telegram.chatId,
+                text: message,
+                parse_mode: 'HTML'
+            });
+            console.log('✅ Telegram sent.');
+        }
+
+        res.json({ 
+            success: true, 
+            date: targetDateStr, 
+            data: foundData || 'No Schedule' 
+        });
+
+    } catch (error) {
+        console.error('Judge Schedule Error:', error.message);
+        
+        // แจ้งเตือน Error เข้า Telegram ด้วย (Optional)
+        const telegram = await getTelegramConfig();
+        if (telegram && telegram.token && telegram.chatId) {
+             await axios.post(`https://api.telegram.org/bot${telegram.token}/sendMessage`, {
+                chat_id: telegram.chatId,
+                text: `⚠️ <b>Error เช็คเวรชี้:</b>\n${error.message}`,
+                parse_mode: 'HTML'
+            }).catch(() => {});
+        }
+
+        res.status(500).json({ error: 'Failed to fetch judge schedule' });
+    }
+});
+
 // Handler: Sync Logic
 const handleSyncCases = async (req, res) => {
     let daysToFetch = parseInt(req.params.days) || 7;
