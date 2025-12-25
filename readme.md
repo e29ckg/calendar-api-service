@@ -186,6 +186,7 @@ Service Account เปรียบเสมือน "ผู้ใช้คน�
 GOOGLE_CLIENT_ID=xxxxxxxxxx.apps.googleusercontent.com
 GOOGLE_CALENDAR_ID=xxxxxxxxxxx@group.calendar.google.com
 GOOGLE_SHEET_ID=1A2B3C4D5E6F....... (รหัสจาก URL)
+```
 
 # นำเนื้อหาในไฟล์ JSON มาวางตรงนี้ (แนะนำให้ทำเป็นบรรทัดเดียว)
 GOOGLE_CREDENTIALS={"type":"service_account","project_id":...}
