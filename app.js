@@ -122,7 +122,7 @@ async function logToSheet(action, eventData, performedBy = 'System') {
             eventData.summary || '-',
             JSON.stringify(eventData.start) || '-',
             JSON.stringify(eventData.end) || '-',
-            new Date().toLocaleString('th-TH')
+            new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })
         ]];
         await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID,
@@ -291,17 +291,43 @@ app.put('/events/:eventId', async (req, res) => {
     try {
         const eventId = req.params.eventId;
         const { summary, description, start, end, isAllDay, userEmail } = req.body;
+
+        // 1. ดึงข้อมูลเก่ามาก่อน
         const oldEvent = await calendar.events.get({ calendarId: CALENDAR_ID, eventId });
-        const updatedEvent = {
-            ...oldEvent.data, summary, description,
-            start: isAllDay ? { date: start, dateTime: null } : (start ? { dateTime: start } : oldEvent.data.start),
-            end: isAllDay ? { date: end, dateTime: null } : (end ? { dateTime: end } : oldEvent.data.end),
+
+        // 2. เตรียม Object สำหรับ Start และ End ใหม่
+        // ต้องระบุ timeZone: 'Asia/Bangkok' เสมอสำหรับแบบระบุเวลา
+        // และต้องเคลียร์ค่าที่ไม่ใช้ออก (เช่น เป็น AllDay ต้องไม่มี dateTime)
+        const eventResource = {
+            ...oldEvent.data, // เก็บข้อมูลเดิมอื่นๆ ไว้ (เช่น สี, ผู้เข้าร่วม)
+            summary: summary || oldEvent.data.summary,
+            description: description || oldEvent.data.description,
+            
+            start: isAllDay 
+                ? { date: start, dateTime: null, timeZone: null } // แบบตลอดวัน: เอาเวลาและโซนออก
+                : { dateTime: start, timeZone: 'Asia/Bangkok', date: null }, // แบบระบุเวลา: บังคับโซนไทย
+
+            end: isAllDay 
+                ? { date: end, dateTime: null, timeZone: null }
+                : { dateTime: end, timeZone: 'Asia/Bangkok', date: null },
         };
-        const response = await calendar.events.update({ calendarId: CALENDAR_ID, eventId, resource: updatedEvent });
+
+        // 3. ส่งข้อมูลไปอัปเดต
+        const response = await calendar.events.update({ 
+            calendarId: CALENDAR_ID, 
+            eventId, 
+            resource: eventResource 
+        });
+
+        // 4. บันทึก Log
         await logToSheet('MANUAL-UPDATE', response.data, userEmail || 'Unknown User');
+
         res.json({ message: 'Updated', event: response.data });
+
     } catch (error) {
-        res.status(500).json({ error: 'Failed' });
+        // เพิ่ม console.error เพื่อให้เห็นสาเหตุเวลา Server พัง
+        console.error('Update Error:', error.message);
+        res.status(500).json({ error: 'Failed to update event' });
     }
 });
 
@@ -317,6 +343,13 @@ app.delete('/events/:eventId/:userEmail', async (req, res) => {
     }
 });
 
+function getThaiDate() {
+    const now = new Date();
+    // แปลงเวลาให้เป็น String ตามโซนไทย แล้วแปลงกลับเป็น Date Object
+    const thaiTimeStr = now.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' });
+    return new Date(thaiTimeStr);
+}
+
 // Notify Today Cases (Telegram)
 app.get('/casetoday', checkToken, async (req, res) => {
     try {
@@ -327,7 +360,7 @@ app.get('/casetoday', checkToken, async (req, res) => {
             return res.status(500).json({ error: 'Telegram config missing in Sheet' });
         }
 
-        const today = new Date();
+        const today = getThaiDate();
         const dateForApi = getBuddhistDateString(today);
         const dateShow = today.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
