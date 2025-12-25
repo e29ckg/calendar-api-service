@@ -389,9 +389,21 @@
     // --- Calendar Logic ---
     function initCalendar() {
         eventModal = new bootstrap.Modal(document.getElementById('eventModal'));
+        
         const today = new Date();
-        document.getElementById('filterStart').value = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-        document.getElementById('filterEnd').value = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+
+        // 1. วันเริ่มต้น: วันนี้ (Today)
+        // แปลงให้เป็น Local Time ก่อนแปลงเป็น ISO เพื่อให้ได้วันที่ถูกต้องตามเวลาไทย
+        const startLocal = new Date(today.getTime() - (today.getTimezoneOffset() * 60000));
+        document.getElementById('filterStart').value = startLocal.toISOString().split('T')[0];
+
+        // 2. วันสิ้นสุด: สิ้นเดือนหน้า (End of Next Month)
+        // อธิบาย: today.getMonth() + 2 คือข้ามไป 2 เดือน
+        // การใส่ day เป็น 0 จะทำให้มันย้อนกลับมาเป็น "วันสุดท้ายของเดือนก่อนหน้า" (ซึ่งก็คือเดือนหน้านั่นเอง)
+        const endNextMonth = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+        const endLocal = new Date(endNextMonth.getTime() - (endNextMonth.getTimezoneOffset() * 60000));
+        document.getElementById('filterEnd').value = endLocal.toISOString().split('T')[0];
+
         fetchEvents();
     }
 

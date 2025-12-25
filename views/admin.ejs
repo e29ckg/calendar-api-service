@@ -90,6 +90,14 @@
             color: white;
             box-shadow: 0 0 15px rgba(34, 158, 217, 0.5);
         }
+        .btn-purple { 
+            background: linear-gradient(45deg, #8e44ad, #9b59b6); 
+            color: white; 
+        }
+        .btn-purple:hover { 
+            color: white; 
+            box-shadow: 0 0 15px rgba(142, 68, 173, 0.5); 
+        }
     </style>
 </head>
 <body>
@@ -138,6 +146,12 @@
                         <button class="btn btn-sync btn-telegram w-100" onclick="triggerCaseToday()">
                             <i class="fab fa-telegram-plane d-block mb-1 fs-3"></i> 
                             <span>ส่งแจ้งเตือน "คดีวันนี้"</span>
+                        </button>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <button class="btn btn-sync btn-purple w-100" onclick="triggerJudgeSchedule()">
+                            <i class="fas fa-gavel d-block mb-1 fs-3"></i> 
+                            <span>เช็ค "เวรชี้วันนี้"</span>
                         </button>
                     </div>
                 </div>
@@ -265,6 +279,48 @@
                     title: 'ส่งไม่สำเร็จ',
                     text: 'กรุณาตรวจสอบ Config Telegram หรือการเชื่อมต่อ Server'
                 });
+            }
+        }
+        // ฟังก์ชันเช็คเวรชี้
+        async function triggerJudgeSchedule() {
+            const confirm = await Swal.fire({
+                title: 'ยืนยันการส่ง?',
+                text: "ระบบจะดึงข้อมูลผู้พิพากษาเวรชี้วันนี้ และส่งเข้า Telegram ทันที",
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#229ED9',
+                confirmButtonText: 'ส่งเลย',
+                cancelButtonText: 'ยกเลิก'
+            });
+
+            if (!confirm.isConfirmed) return;
+
+            Swal.fire({
+                title: 'กำลังตรวจสอบ...',
+                allowOutsideClick: false,
+                didOpen: () => { Swal.showLoading(); }
+            });
+
+            try {
+                const response = await fetch(`${API_URL}/judgeschedule`);
+                const result = await response.json();
+
+                if (response.ok) {
+                    let msg = 'ไม่พบเวรชี้ในระบบ';
+                    if (result.data && result.data.judgeName) {
+                        msg = `เวรชี้วันนี้คือ: ${result.data.judgeName}`;
+                    }
+                    
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'เรียบร้อย',
+                        text: `${msg} (แจ้งเตือนถูกส่งแล้ว)`
+                    });
+                } else {
+                    throw new Error(result.error);
+                }
+            } catch (error) {
+                Swal.fire('Error', 'ไม่สามารถดึงข้อมูลได้', 'error');
             }
         }
     </script>
