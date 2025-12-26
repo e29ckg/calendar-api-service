@@ -6,6 +6,7 @@ const { OAuth2Client } = require('google-auth-library');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const path = require('path');
+const bcrypt = require('bcryptjs');
 
 require('dotenv').config();
 
@@ -96,6 +97,7 @@ async function getTelegramConfig() {
     }
 }
 
+
 // 2. ดึงรายชื่อ Email จาก Sheet 'Users'
 async function getAllowedEmails() {
     try {
@@ -142,6 +144,28 @@ function getBuddhistDateString(date) {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const year = d.getFullYear() + 543;
     return `${day}/${month}/${year}`;
+}
+
+// Helper: ดึงข้อมูล Accounts จาก Sheet
+async function getAppAccounts() {
+    try {
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: 'Accounts!A2:D', // อ่าน Username, PassHash, Name, Email
+        });
+        const rows = response.data.values;
+        if (!rows || rows.length === 0) return [];
+
+        return rows.map(row => ({
+            username: row[0] ? row[0].trim() : '',
+            passwordHash: row[1] ? row[1].trim() : '',
+            name: row[2] ? row[2].trim() : 'Unknown',
+            email: row[3] ? row[3].trim().toLowerCase() : ''
+        }));
+    } catch (error) {
+        console.error('Error fetching accounts:', error.message);
+        return [];
+    }
 }
 
 // ==========================================
@@ -246,6 +270,71 @@ app.post('/api/google-login', async (req, res) => {
     } catch (error) {
         console.error('Login Error:', error);
         res.status(401).json({ success: false, message: 'Invalid Token' });
+    }
+});
+
+// Route พิเศษ: เอาไว้ Gen Hash ไปใส่ใน Google Sheet (ใช้เสร็จแล้วลบทิ้ง หรือ comment ไว้)
+// วิธีใช้: เรียก http://localhost:3000/gen-hash/รหัสผ่านที่ต้องการ
+app.get('/gen-hash/:password', async (req, res) => {
+    const salt = await bcrypt.genSalt(10);
+    const hash = await bcrypt.hash(req.params.password, salt);
+    res.send(`
+        <h3>Password: ${req.params.password}</h3>
+        <h3>Hash: <input value="${hash}" style="width:100%"></h3>
+        <p>ก๊อปปี้ช่อง Hash ไปใส่ใน Google Sheet แผ่น 'Accounts' คอลัมน์ B</p>
+    `);
+});
+// API Login ด้วย Username/Password (Manual)
+app.post('/api/manual-login', async (req, res) => {
+    const { username, password } = req.body;
+
+    // ดึงค่าจาก .env
+    const envUser = process.env.ADMIN_USERNAME;
+    const envPass = process.env.ADMIN_PASSWORD;
+    const envEmail = process.env.ADMIN_EMAIL;
+    const envName = process.env.ADMIN_NAME || 'Admin';
+
+    try {
+        // 1. ตรวจสอบว่ามีการตั้งค่าใน .env ครบไหม
+        if (!envUser || !envPass || !envEmail) {
+            return res.status(500).json({ success: false, message: 'Server Config Error: Admin credentials missing in .env' });
+        }
+
+        // 2. ตรวจสอบ Username และ Password (เปรียบเทียบตรงๆ)
+        if (username === envUser && password === envPass) {
+            
+            console.log(`✅ Manual Login Success (Env): ${username}`);
+
+            // 3. ฝัง Cookie (เหมือน Google Login)
+            res.cookie('user_email', envEmail, { 
+                signed: true,       
+                httpOnly: true,     
+                maxAge: 24 * 60 * 60 * 1000, // 1 วัน
+                sameSite: 'lax',
+                secure: false // true ถ้าใช้ https
+            });
+
+            // 4. บันทึก Log
+            logToSheet('LOGIN-MANUAL', { id: '-', summary: 'User Login (.env)' }, envEmail);
+
+            // 5. ส่งข้อมูลกลับไป Frontend
+            res.json({ 
+                success: true, 
+                user: { 
+                    name: envName, 
+                    email: envEmail, 
+                    picture: `https://ui-avatars.com/api/?name=${envName}&background=0D8ABC&color=fff`
+                } 
+            });
+
+        } else {
+            // กรณีรหัสผิด
+            return res.status(401).json({ success: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+        }
+
+    } catch (error) {
+        console.error('Manual Login Error:', error);
+        res.status(500).json({ success: false, message: 'Internal Server Error' });
     }
 });
 

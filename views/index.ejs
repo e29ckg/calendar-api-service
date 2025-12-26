@@ -193,6 +193,23 @@
              data-logo_alignment="left"
              data-width="320">
         </div>
+        <div class="text-center mt-3">
+            <button class="btn btn-sm btn-outline-secondary" onclick="toggleManualLogin()">
+                <i class="fas fa-key me-1"></i> เข้าสู่ระบบด้วยรหัสผ่าน
+            </button>
+        </div>
+        <div id="manualLoginSection" class="mt-3 p-3 border rounded bg-light" style="display: none;">
+            <h5 class="mb-3 text-secondary">เข้าสู่ระบบ (Admin)</h5>
+            <form onsubmit="handleManualLogin(event)">
+                <div class="mb-2">
+                    <input type="text" id="username" class="form-control" placeholder="Username" required>
+                </div>
+                <div class="mb-2">
+                    <input type="password" id="password" class="form-control" placeholder="Password" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100">Sign In</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -642,6 +659,55 @@ async function deleteEvent(id) {
     </div>`;
             container.innerHTML += html;
         });
+    }
+    // สลับแสดงฟอร์ม
+    function toggleManualLogin() {
+        const form = document.getElementById('manualLoginSection');
+        form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // จัดการการ Login
+    async function handleManualLogin(e) {
+        e.preventDefault();
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+
+        Swal.fire({ title: 'Checking...', didOpen: () => Swal.showLoading() });
+
+        try {
+            const res = await fetch(`${API_URL}/api/manual-login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+                credentials: 'include' // สำคัญมาก! เพื่อรับ Cookie
+            });
+
+            const data = await res.json();
+
+            if (data.success) {
+                Swal.close();
+                // บันทึก Session ฝั่ง Client
+                sessionStorage.setItem('app_auth', 'true');
+                sessionStorage.setItem('user_info', JSON.stringify(data.user));
+                
+                // แสดงหน้า App
+                showApp(); 
+                
+                Swal.fire({
+                    icon: 'success',
+                    title: 'ยินดีต้อนรับ',
+                    text: `สวัสดีคุณ ${data.user.name}`,
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+            } else {
+                Swal.fire('Login Failed', data.message, 'error');
+            }
+
+        } catch (error) {
+            console.error(error);
+            Swal.fire('Error', 'เชื่อมต่อ Server ไม่ได้', 'error');
+        }
     }
 </script>
 
