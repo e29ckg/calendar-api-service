@@ -288,49 +288,51 @@ app.get('/gen-hash/:password', async (req, res) => {
 app.post('/api/manual-login', async (req, res) => {
     const { username, password } = req.body;
 
-    // ดึงค่าจาก .env
-    const envUser = process.env.ADMIN_USERNAME;
-    const envPass = process.env.ADMIN_PASSWORD;
-    const envEmail = process.env.ADMIN_EMAIL;
-    const envName = process.env.ADMIN_NAME || 'Admin';
-
     try {
-        // 1. ตรวจสอบว่ามีการตั้งค่าใน .env ครบไหม
-        if (!envUser || !envPass || !envEmail) {
-            return res.status(500).json({ success: false, message: 'Server Config Error: Admin credentials missing in .env' });
+        // 1. ดึงข้อมูล User ทั้งหมดจาก Sheet Accounts
+        const accounts = await getAppAccounts();
+        
+        // 2. ค้นหา Username
+        const user = accounts.find(acc => acc.username === username);
+        if (!user) {
+            return res.status(401).json({ success: false, message: 'ไม่พบชื่อผู้ใช้งานนี้' });
         }
 
-        // 2. ตรวจสอบ Username และ Password (เปรียบเทียบตรงๆ)
-        if (username === envUser && password === envPass) {
-            
-            console.log(`✅ Manual Login Success (Env): ${username}`);
-
-            // 3. ฝัง Cookie (เหมือน Google Login)
-            res.cookie('user_email', envEmail, { 
-                signed: true,       
-                httpOnly: true,     
-                maxAge: 24 * 60 * 60 * 1000, // 1 วัน
-                sameSite: 'lax',
-                secure: false // true ถ้าใช้ https
-            });
-
-            // 4. บันทึก Log
-            logToSheet('LOGIN-MANUAL', { id: '-', summary: 'User Login (.env)' }, envEmail);
-
-            // 5. ส่งข้อมูลกลับไป Frontend
-            res.json({ 
-                success: true, 
-                user: { 
-                    name: envName, 
-                    email: envEmail, 
-                    picture: `https://ui-avatars.com/api/?name=${envName}&background=0D8ABC&color=fff`
-                } 
-            });
-
-        } else {
-            // กรณีรหัสผิด
-            return res.status(401).json({ success: false, message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+        // 3. ตรวจสอบรหัสผ่าน (เทียบ Plain Text กับ Hash)
+        const isMatch = await bcrypt.compare(password, user.passwordHash);
+        if (!isMatch) {
+            return res.status(401).json({ success: false, message: 'รหัสผ่านไม่ถูกต้อง' });
         }
+
+        // 4. ตรวจสอบว่า Email นี้ได้รับอนุญาตเข้า Admin ไหม (Check Whitelist)
+        // (ถ้าอยากให้ User/Pass เข้าได้เลยโดยไม่ต้องเช็ค Sheet 'Users' ให้ข้ามขั้นตอนนี้)
+        const allowedList = await getAllowedEmails();
+        if (!allowedList.includes(user.email)) {
+             return res.status(403).json({ success: false, message: 'บัญชีนี้ไม่มีสิทธิ์เข้าถึง (ไม่อยู่ใน Whitelist)' });
+        }
+
+        // 5. Login สำเร็จ -> ฝัง Cookie เหมือน Google Login
+        console.log(`✅ Manual Login Success: ${username} (${user.email})`);
+
+        res.cookie('user_email', user.email, { 
+            signed: true,       
+            httpOnly: true,     
+            maxAge: 24 * 60 * 60 * 1000,
+            sameSite: 'lax',
+            secure: false
+        });
+
+        // 6. บันทึก Log
+        logToSheet('LOGIN-MANUAL', { id: '-', summary: 'User Login (Manual)' }, user.email);
+
+        res.json({ 
+            success: true, 
+            user: { 
+                name: user.name, 
+                email: user.email, 
+                picture: 'https://ui-avatars.com/api/?name=' + user.name // รูป Avatar สร้างเองง่ายๆ
+            } 
+        });
 
     } catch (error) {
         console.error('Manual Login Error:', error);
